@@ -35,7 +35,7 @@ function getGamma(α, β=nothing; AA)
 
     DD = Deg.(AA);
     Gm = I + sum(abs.(α) .* DD) - sum(α .* AA);
-    
+
     if !isnothing(β)
         Gamma = β * Gm;
     else
@@ -47,7 +47,7 @@ end
 
 function logdet_gt(L, U; msg="")
     Gamma = getGamma(getα(); AA=AA);
-    result = logdet(Array(Gamma[setdiff(1:n*2*p,L),setdiff(1:n*2*p,L)])) - 
+    result = logdet(Array(Gamma[setdiff(1:n*2*p,L),setdiff(1:n*2*p,L)])) -
              logdet(Array(Gamma[setdiff(1:n*2*p,L,U),setdiff(1:n*2*p,L,U)]));
     return result;
 end

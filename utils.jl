@@ -39,8 +39,7 @@ end
 function getA(G, p)
     """
     Given a graph, generate the graphical model that has every vertex mapped to
-    2p vertices, with p of them representing features, and the remaining p of
-    them represent observations.
+    p vertices, with p of them representing features
 
     Args:
        G: LightGraph Object
@@ -54,19 +53,14 @@ function getA(G, p)
 
     # connections among corresponding features on different vertices
     for i in 1:p
-        push!(A, kron(A0, sparse([i], [i], [1.0], 2*p, 2*p)));
+        push!(A, kron(A0, sparse([i], [i], [1.0], p, p)));
     end
 
     # connections among different features on same vertices
-    for i in 1:p-1
-        for j in i+1:p
-            push!(A, kron(spdiagm(0=>ones(n)), sparse([i,j], [j,i], [1.0,1.0], 2*p, 2*p)));
-        end
-    end
-
-    # connections between features and observations
     for i in 1:p
-        push!(A, kron(spdiagm(0=>ones(n)), sparse([i,i+p], [i+p,i], [1.0,1.0], 2*p, 2*p)));
+        for j in i+1:p
+            push!(A, kron(spdiagm(0=>ones(n)), sparse([i,j], [j,i], [1.0,1.0], p, p)));
+        end
     end
 
     return A;
