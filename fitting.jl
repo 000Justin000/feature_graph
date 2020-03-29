@@ -13,8 +13,8 @@ include("kernels.jl");
 # G = watts_strogatz(10, 4, 0.3);
 G = complete_graph(2);
 
-p1 = 3;
-p2, s, d = 2, [2, 2], [1, 1];
+p1 = 1;
+p2, s, d = 1, [2], [1];
 t, k = 128, 32;
 
 p = p1 + sum(d);
@@ -25,12 +25,16 @@ N = 1000;
 n_batch = 32;
 
 FIDX(fidx, V=vertices(G)) = [(i-1)*p+j for i in V for j in fidx];
-ss = p1 .+ vcat(0, cumsum(d)[1:end-1]) .+ 1;
-ff = p1 .+ cumsum(d);
-cr = [ss_:ff_ for (ss_,ff_) in zip(ss,ff)];
+ss = vcat(0, cumsum(d)[1:end-1]) .+ 1;
+ff = cumsum(d);
+cr = [p1+ss_:p1+ff_ for (ss_,ff_) in zip(ss,ff)];
 
-# α0 = vcat(ones(p), ones(div(p*(p-1),2)));
-α0 = vcat(randn(p), randn(div(p*(p-1),2)));
+V = collect(1:size(A[1],1));
+L = FIDX(1:p1);
+U = setdiff(V,L);
+
+α0 = vcat(ones(p), ones(div(p*(p-1),2))*5.0);
+# α0 = vcat(randn(p), randn(div(p*(p-1),2)));
 β0 = exp(randn());
 CM0 = inv(Array(getΓ(α0, β0; A=A)));
 CM = (CM0 + CM0')/2.0;
@@ -67,28 +71,49 @@ X = sample_from.(logPX(Z));
 
 getα() = vcat(φ[1:p], φ[p+1:end-1]);
 getβ() = exp(φ[end]);
-getμ(X) = [tsctc(μ_, X_) for (μ_, X_) in zip(μ, X)];
-getσ(X) = [exp.(tsctc(logσ_, X_)) for (logσ_, X_) in zip(logσ, X)];
-getlogσ(X) = [tsctc(logσ_, X_) for (logσ_, X_) in zip(logσ, X)];
 
-print_params() = @printf("α:  %s,    β:  %10.3f\n", array2str(getα()), getβ());
+function Qzμσ0(X, Y)
+    μZ0 = [tsctc(μ_, X_) for (μ_, X_) in zip(μ, X)];
+    σZ0 = [exp.(tsctc(logσ_, X_)) for (logσ_, X_) in zip(logσ, X)];
 
-function EQzlogPX(X)
-    ZS = [μ_ + σ_ .* randn(size(σ_)) for (μ_, σ_) in zip(getμ(X), getσ(X))];
+    return μZ0, σZ0;
+end
+
+function Qzμσ1(X, Y)
+    batch_size = size(Y,3);
+
+    μZ0, σZ0 = Qzμσ0(X, Y);
+
+    C1 = [σZ0_.^-2.0 .* μZ0_ for (μZ0_,σZ0_) in zip(μZ0,σZ0)];
+
+    ΓUL = getΓ(getα(), getβ(); A=A)[U,L];
+    C2S = reshape(-ΓUL * reshape(Y, (p1*n, batch_size)), (sum(d), n, batch_size));
+    C2 = [Tracker.collect(C2S[ss_:ff_,:,:]) for (ss_,ff_) in zip(ss,ff)];
+
+    σZ1 = [(σZ0_.^-2.0 .+ getβ()).^-0.5 for σZ0_ in σZ0];
+    μZ1 = [σZ1_.^2.0 .* (C1_ .+ C2_) for (σZ1_, C1_, C2_) in zip(σZ1, C1, C2)];
+
+    return μZ1, σZ1;
+end
+
+Qzμσ = Qzμσ1;
+
+function EQzlogPX(X, Y)
+    ZS = [μZ_ + σZ_ .* randn(size(σZ_)) for (μZ_, σZ_) in zip(Qzμσ(X, Y)...)];
     Ω = sum(sum(logPX_ .* X_) for (logPX_,X_) in zip(logPX(ZS),X));
 
-    return Ω / size(X[1],3);
+    return Ω;
 end
 
 function loss(X, Y)
-    V = collect(1:size(A[1],1));
-    L = FIDX(1:p1);
-    U = setdiff(V,L);
+    batch_size = size(Y,3);
 
-    μZS = cat(getμ(X)..., dims=1);
+    μZ, σZ = Qzμσ(X, Y);
+
+    μZS = cat(μZ..., dims=1);
     μzs = [vec(μZS[:,:,i]) for i in 1:size(μZS,3)];
 
-    σZS = cat(getσ(X)..., dims=1);
+    σZS = cat(σZ..., dims=1);
     σzs = [vec(σZS[:,:,i]) for i in 1:size(σZS,3)];
 
     YZS = cat(Y,μZS, dims=1);
@@ -98,14 +123,15 @@ function loss(X, Y)
     Ω = 0.5 * logdetΓ(getα(), getβ(); A=A, P=V, t=t, k=k);
     Ω -= 0.5 * mean(quadformSC(getα(), getβ(), yzs_; A=A, L=V) for yzs_ in yzs);
     Ω -= 0.5 * mean(dot(diagΓUU, σz.^2) for σz in σzs);
-    Ω += sum(sum(logσ_) for logσ_ in getlogσ(X)) / size(X[1],3);
-    Ω += EQzlogPX(X);
+    Ω += sum(log.(σZS)) / batch_size;
+    Ω += EQzlogPX(X, Y) / batch_size;
 
     return -Ω;
 end
 
 dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:20000];
 
+print_params() = @printf("α:  %s,    β:  %10.3f\n", array2str(getα()), getβ());
 train!(loss, Flux.params(φ, μ..., logσ...), dat, Descent(0.01), cb = throttle(print_params, 10));
 
 

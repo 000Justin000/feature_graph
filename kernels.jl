@@ -96,7 +96,7 @@ logdetΓ(α::TrackedVector, β::TrackedReal; A, P, t, k) = track(logdetΓ, α, �
          k: # of Lanczos tridiagonal iterations
 
     Return:
-         log determinant of the principle submatrix
+         log determinant of the principle submatrix ΓPP
     """
 
     (length(P) == 0) && return 0.0, Δ -> (zeros(length(α)), 0.0);
