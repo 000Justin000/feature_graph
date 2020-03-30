@@ -10,11 +10,10 @@ using Distributions;
 include("utils.jl");
 include("kernels.jl");
 
-# G = watts_strogatz(10, 4, 0.3);
-G = complete_graph(2);
+G = watts_strogatz(10, 4, 0.3);
 
-p1 = 1;
-p2, s, d = 1, [2], [1];
+p1 = 3;
+p2, s, d = 2, [2,2], [1,1];
 t, k = 128, 32;
 
 p = p1 + sum(d);
@@ -33,9 +32,10 @@ V = collect(1:size(A[1],1));
 L = FIDX(1:p1);
 U = setdiff(V,L);
 
-α0 = vcat(ones(p), ones(div(p*(p-1),2))*5.0);
-# α0 = vcat(randn(p), randn(div(p*(p-1),2)));
-β0 = exp(randn());
+# α0 = vcat(ones(p), ones(div(p*(p-1),2))*5.0);
+α0 = vcat(randn(p), randn(div(p*(p-1),2)));
+β0 = 1.0
+# β0 = exp(randn());
 CM0 = inv(Array(getΓ(α0, β0; A=A)));
 CM = (CM0 + CM0')/2.0;
 g = MvNormal(CM);
@@ -129,7 +129,7 @@ function loss(X, Y)
     return -Ω;
 end
 
-dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:20000];
+dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:50000];
 
 print_params() = @printf("α:  %s,    β:  %10.3f\n", array2str(getα()), getβ());
 train!(loss, Flux.params(φ, μ..., logσ...), dat, Descent(0.01), cb = throttle(print_params, 10));
