@@ -13,7 +13,7 @@ include("kernels.jl");
 G = watts_strogatz(10, 4, 0.3);
 
 p1 = 3;
-p2, s, d = 2, [2,2], [1,1];
+p2, s, d = 1, [2], [2];
 t, k = 128, 32;
 
 p = p1 + sum(d);
@@ -47,16 +47,19 @@ Z = [YZ[cr_,:,:] for cr_ in cr];
 
 tsctc(A, B) = reshape(A * reshape(B, (size(B,1), :)), (size(A,1), size(B)[2:end]...));
 
-W0 = [[-5.0, 5.0] for j in 1:p2];
-# W0 = [diagm(0=>ones(s[j])*5.0) for j in 1:p2];
+# W0 = [[-5.0, 5.0] for j in 1:p2];
+W0 = [diagm(0=>ones(s[j])*5.0) for j in 1:p2];
 # W0 = [randn(s[j], d[j]) for j in 1:p2];
 
+b0 = [randn(s[j]) for j in 1:p2];
+
 φ = param(zeros(div(p*(p+1),2)+1));
-W = [param(w0) for w0 in W0];
+W = [param(W_) for W_ in W0];
+b = [param(b_) for b_ in b0];
 μ = [param(randn(d[j], s[j])) for j in 1:p2];
 logσ = [param(randn(d[j], s[j])) for j in 1:p2];
 
-logPX(Z) = [logsoftmax(tsctc(W_,Z_), dims=1) for (W_,Z_) in zip(W,Z)];
+logPX(Z) = [logsoftmax(tsctc(W_,Z_) .+ repeat(b_,1,n,size(Z_,3)), dims=1) for (W_,Z_,b_) in zip(W,Z,b)];
 
 function sample_from(logpx)
     x = zeros(size(logpx));
