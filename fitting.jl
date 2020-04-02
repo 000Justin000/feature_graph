@@ -3,25 +3,28 @@ using Flux: train!, throttle, Tracker;
 using LinearAlgebra;
 using SparseArrays;
 using LightGraphs;
-using Plots; pyplot();
+using Plots;
 using LaTeXStrings;
 using Distributions;
+using QuadGK;
+using SpecialFunctions;
 
 include("utils.jl");
 include("kernels.jl");
 
-G = watts_strogatz(10, 4, 0.3);
+# G = watts_strogatz(10, 4, 0.3);
+G = complete_graph(1);
 
-p1 = 3;
-p2, s, d = 1, [2], [2];
+p1 = 0;
+p2, s, d = 1, [2], [1];
 t, k = 128, 32;
 
 p = p1 + sum(d);
 n = nv(G);
 A = getA(G, p);
 D = A2D.(A);
-N = 1000;
-n_batch = 32;
+N = 1024;
+n_batch = 8;
 
 FIDX(fidx, V=vertices(G)) = [(i-1)*p+j for i in V for j in fidx];
 ss = vcat(0, cumsum(d)[1:end-1]) .+ 1;
@@ -32,9 +35,9 @@ V = collect(1:size(A[1],1));
 L = FIDX(1:p1);
 U = setdiff(V,L);
 
-# α0 = vcat(ones(p), ones(div(p*(p-1),2))*5.0);
-α0 = vcat(randn(p), randn(div(p*(p-1),2)));
-β0 = 1.0
+α0 = vcat(ones(p)*5.0, ones(div(p*(p-1),2))*5.0);
+# α0 = vcat(randn(p), randn(div(p*(p-1),2)));
+β0 = 1.0;
 # β0 = exp(randn());
 CM0 = inv(Array(getΓ(α0, β0; A=A)));
 CM = (CM0 + CM0')/2.0;
@@ -47,34 +50,35 @@ Z = [YZ[cr_,:,:] for cr_ in cr];
 
 tsctc(A, B) = reshape(A * reshape(B, (size(B,1), :)), (size(A,1), size(B)[2:end]...));
 
-# W0 = [[-5.0, 5.0] for j in 1:p2];
-W0 = [diagm(0=>ones(s[j])*5.0) for j in 1:p2];
+W0 = [[-5.0, 5.0] for j in 1:p2];
+# W0 = [diagm(0=>ones(s[j])*5.0) for j in 1:p2];
 # W0 = [randn(s[j], d[j]) for j in 1:p2];
 
-b0 = [randn(s[j]) for j in 1:p2];
+b0 = [zeros(s[j]) for j in 1:p2];
 
 φ = param(zeros(div(p*(p+1),2)+1));
 W = [param(W_) for W_ in W0];
 b = [param(b_) for b_ in b0];
 μ = [param(randn(d[j], s[j])) for j in 1:p2];
 logσ = [param(randn(d[j], s[j])) for j in 1:p2];
+η = [param(randn(d[j], s[j])) for j in 1:p2];
 
 logPX(Z) = [logsoftmax(tsctc(W_,Z_) .+ repeat(b_,1,n,size(Z_,3)), dims=1) for (W_,Z_,b_) in zip(W,Z,b)];
 
-function sample_from(logpx)
-    x = zeros(size(logpx));
-    for j in 1:size(logpx,2)
-        for k in 1:size(logpx,3)
-            x[sample(Weights(exp.(logpx[:,j,k]))),j,k] = 1;
+X = [begin
+        x = zeros(size(logPX_));
+        for j in 1:size(logPX_,2)
+            for k in 1:size(logPX_,3)
+                x[sample(Weights(exp.(logPX_[:,j,k]))),j,k] = 1;
+            end
         end
-    end
-    return x;
-end
-X = sample_from.(logPX(Z));
+        x;
+     end for logPX_ in logPX(Z)];
 
 getα() = vcat(φ[1:p], φ[p+1:end-1]);
 getβ() = exp(φ[end]);
 
+# return normal distribution with diagonal covariance matrix, conditioned on X
 function Qzμσ0(X, Y)
     μZ0 = [tsctc(μ_, X_) for (μ_, X_) in zip(μ, X)];
     σZ0 = [exp.(tsctc(logσ_, X_)) for (logσ_, X_) in zip(logσ, X)];
@@ -82,6 +86,7 @@ function Qzμσ0(X, Y)
     return μZ0, σZ0;
 end
 
+# return normal distribution with diagonal covariance matrix, conditioned on X & Y
 function Qzμσ1(X, Y)
     batch_size = size(Y,3);
 
@@ -99,35 +104,162 @@ function Qzμσ1(X, Y)
     return μZ1, σZ1;
 end
 
-Qzμσ = Qzμσ1;
+# sample normal distribution with diagonal covariance matrix
+sample_μσ(μZ, σZ) = [μZ_ + σZ_ .* randn(size(σZ_)) for (μZ_, σZ_) in zip(μZ, σZ)];
+
+# return skewed normal distribution with diagonal covariance matrix, conditioned on X
+function Qzμση0(X, Y)
+    μZ0 = [tsctc(μ_, X_) for (μ_, X_) in zip(μ, X)];
+    σZ0 = [exp.(tsctc(logσ_, X_)) for (logσ_, X_) in zip(logσ, X)];
+    ηZ0 = [tsctc(η_, X_) for (η_, X_) in zip(η, X)];
+
+    return μZ0, σZ0, ηZ0;
+end
+
+# sample skewed normal distribution with diagonal covariance matrix
+sample_μση(μZ, σZ, ηZ) = [begin
+                              d_, batch_size, etype = size(μZ_,1), size(μZ_,3), eltype(μZ_);
+
+                              δZ_ = (σZ_.^2 .* ηZ_) ./ sqrt.(1 .+ sum(σZ_.^2 .* ηZ_.^2, dims=1));
+                              ZS_ = Array{etype}(undef, size(μZ_)...);
+                              for j in 1:n
+                                  for k in 1:batch_size
+                                      CM_ = Array{etype}(undef, d_,d_);
+                                      CM_ .= diagm(0=>σZ_[:,j,k].^2) - δZ_[:,j,k] * δZ_[:,j,k]';
+                                      ZS_[:,j,k] .= μZ_[:,j,k] .+ δZ_[:,j,k] * abs(randn()) + Tracker.collect(cholesky(CM_).U * randn(d_));
+                                  end
+                              end
+
+                              Tracker.collect(ZS_);
+                          end for (μZ_, σZ_, ηZ_) in zip(μZ, σZ, ηZ)];
+function H_N(μ, σ)
+    """
+    Args:
+        μ: center of the Gaussian
+        σ: spread parameter
+
+    Return:
+        entropy of the Gaussian
+    """
+    @assert length(μ) == length(σ);
+    k = length(μ);
+
+    H0 = 0.5 * k + 0.5 * k * log(2π) + sum(log.(σ));
+
+    return H0;
+end
+
+function H_SN(μ, σ, η)
+    """
+    Args:
+        μ: center of skewed Gaussian
+        σ: spread parameter
+        η: skewness parameter
+
+    Return:
+        entropy of the skewed Gaussian
+    """
+    @assert length(μ) == length(σ) == length(η);
+    k = length(μ);
+
+    ϕ(x) = exp(-0.5*x^2.0) / sqrt(2π);
+    Φ(x) = 0.5 * (1.0 + erf(x/√2));
+
+    τ = sum((η .* σ).^2.0);
+    ω = sqrt(τ);
+    α = sqrt(τ);
+
+    fp(x) = (f = 2*ϕ(x) * Φ(α*x);  (f != 0.0) && (f *= log(2*Φ(ω*x))); f);
+    fm(x) = (f = 2*ϕ(x) * Φ(-α*x); (f != 0.0) && (f *= log(2*Φ(-ω*x))); f);
+
+    H0 = 0.5 * k + 0.5 * k * log(2π) + sum(log.(σ));
+
+    return H0 - quadgk(fp, -Inf, Inf)[1];
+end
+
+Qz, sample_Qz, H = Qzμση0, sample_μση, H_SN;
+
+function Equadform(X, Y)
+    batch_size = size(Y,3);
+
+    pZ = Qz(X, Y);
+
+    if length(pZ) == 2
+        μZ, σZ = pZ;
+        EZS = cat(μZ..., dims=1);
+    elseif length(pZ) == 3
+        μZ, σZ, ηZ = pZ;
+        δZ = [(σZ_.^2 .* ηZ_) ./ sqrt.(1 .+ sum(σZ_.^2 .* ηZ_.^2, dims=1)) for (σZ_,ηZ_) in zip(σZ,ηZ)];
+        EZS = cat(μZ..., dims=1) + sqrt(2/π) * cat(δZ..., dims=1);
+    else
+        error("unexpected length of pZ");
+    end
+
+    YZS = cat(Y,EZS, dims=1);
+    yzs = [vec(YZS[:,:,i]) for i in 1:batch_size];
+
+    return mean(quadformSC(getα(), getβ(), yzs_; A=A, L=V) for yzs_ in yzs);
+end
+
+function Etrace(X, Y)
+    batch_size = size(Y,3);
+
+    pZ = Qz(X, Y);
+
+    Γ = getΓ(getα(), getβ(); A=A);
+    Gm(i,k) = (idx = FIDX([k],[i]); Tracker.collect(Γ[idx,idx]));
+
+    if length(pZ) == 2
+        μZ, σZ = pZ;
+        δZ = nothing;
+
+        Var = (i,j,k) -> diagm(0=>σZ[k][:,i,j].^2.0);
+    elseif length(pZ) == 3
+        μZ, σZ, ηZ = pZ;
+        δZ = [(σZ_.^2 .* ηZ_) ./ sqrt.(1 .+ sum(σZ_.^2 .* ηZ_.^2, dims=1)) for (σZ_,ηZ_) in zip(σZ,ηZ)];
+
+        Var = (i,j,k) -> diagm(0=>σZ[k][:,i,j].^2.0) - 2/π * δZ[k][:,i,j] * δZ[k][:,i,j]';
+    else
+        error("unexpected length of pZ");
+    end
+
+    return sum(sum(Gm(i,k) .* Var(i,j,k)) for k in 1:p2 for j in 1:batch_size for i in 1:n) / batch_size;
+end
+
+function EH(X, Y)
+    batch_size = size(Y,3);
+
+    pZ = Qz(X, Y);
+
+    if length(pZ) == 2
+        μZ, σZ = pZ;
+
+        HH = (i,j,k) -> H(μZ[k][:,i,j], σZ[k][:,i,j]);
+    elseif length(pZ) == 3
+        μZ, σZ, ηZ = pZ;
+
+        HH = (i,j,k) -> H(μZ[k][:,i,j], σZ[k][:,i,j], ηZ[k][:,i,j]);
+    else
+        error("unexpected length of pZ");
+    end
+
+    return sum(HH(i,j,k) for k in 1:p2 for j in 1:batch_size for i in 1:n) / batch_size;
+end
 
 function EQzlogPX(X, Y)
-    ZS = [μZ_ + σZ_ .* randn(size(σZ_)) for (μZ_, σZ_) in zip(Qzμσ(X, Y)...)];
+    batch_size = size(Y,3);
+    ZS = sample_Qz(Qz(X,Y)...);
     Ω = sum(sum(logPX_ .* X_) for (logPX_,X_) in zip(logPX(ZS),X));
 
-    return Ω;
+    return Ω / batch_size;
 end
 
 function loss(X, Y)
-    batch_size = size(Y,3);
-
-    μZ, σZ = Qzμσ(X, Y);
-
-    μZS = cat(μZ..., dims=1);
-    μzs = [vec(μZS[:,:,i]) for i in 1:size(μZS,3)];
-
-    σZS = cat(σZ..., dims=1);
-    σzs = [vec(σZS[:,:,i]) for i in 1:size(σZS,3)];
-
-    YZS = cat(Y,μZS, dims=1);
-    yzs = [vec(YZS[:,:,i]) for i in 1:size(YZS,3)];
-
-    diagΓUU = Tracker.collect(diag(getΓ(getα(), getβ(); A=A)[U,U]));
     Ω = 0.5 * logdetΓ(getα(), getβ(); A=A, P=V, t=t, k=k);
-    Ω -= 0.5 * mean(quadformSC(getα(), getβ(), yzs_; A=A, L=V) for yzs_ in yzs);
-    Ω -= 0.5 * mean(dot(diagΓUU, σz.^2) for σz in σzs);
-    Ω += sum(log.(σZS)) / batch_size;
-    Ω += EQzlogPX(X, Y) / batch_size;
+    Ω -= 0.5 * Equadform(X,Y);
+    Ω -= 0.5 * Etrace(X,Y);
+    Ω += EH(X,Y);
+    Ω += EQzlogPX(X, Y);
 
     return -Ω;
 end
@@ -135,7 +267,7 @@ end
 dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:50000];
 
 print_params() = @printf("α:  %s,    β:  %10.3f\n", array2str(getα()), getβ());
-train!(loss, Flux.params(φ, μ..., logσ...), dat, Descent(0.01), cb = throttle(print_params, 10));
+train!(loss, Flux.params(φ, μ..., logσ..., η...), dat, Descent(0.01), cb = throttle(print_params, 10));
 
 
 #----------------------------------------------------
