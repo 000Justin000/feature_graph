@@ -12,6 +12,12 @@ Pkg.add(Pkg.PackageSpec(name="MultivariateStats", version="0.7.0" ))
 Pkg.add(Pkg.PackageSpec(name="Flux",              version="0.9.0" ))
 Pkg.add(Pkg.PackageSpec(name="DataFrames",        version="0.20.2"))
 Pkg.add(Pkg.PackageSpec(name="MLBase",            version="0.8.0" ))
+Pkg.add(Pkg.PackageSpec(name="Plots",             version="0.29.9"))
+Pkg.add(Pkg.PackageSpec(name="LaTeXStrings",      version="1.1.0" ))
+Pkg.add(Pkg.PackageSpec(name="Distributions",     version="0.21.9"))
+Pkg.add(Pkg.PackageSpec(name="QuadGK",            version="2.3.1" ))
+Pkg.add(Pkg.PackageSpec(name="SpecialFunctions",  version="0.8.0" ))
+
 
 Pkg.add(Pkg.PackageSpec(url="https://github.com/000Justin000/GraphSAGE.git", rev="master"))
 Pkg.add(Pkg.PackageSpec(url="https://github.com/000Justin000/Tracker.jl.git", rev="master"))

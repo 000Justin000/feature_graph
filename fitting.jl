@@ -6,24 +6,27 @@ using LightGraphs;
 using Plots;
 using LaTeXStrings;
 using Distributions;
-using QuadGK;
+using FastGaussQuadrature;
 using SpecialFunctions;
+using Random;
 
 include("utils.jl");
 include("kernels.jl");
 
+Random.seed!(0);
+
 # G = watts_strogatz(10, 4, 0.3);
-G = complete_graph(1);
+G = complete_graph(2);
 
 p1 = 0;
 p2, s, d = 1, [2], [1];
-t, k = 128, 32;
+t, k, glm = 128, 32, 100;
 
 p = p1 + sum(d);
 n = nv(G);
 A = getA(G, p);
 D = A2D.(A);
-N = 1024;
+N = 4096;
 n_batch = 8;
 
 FIDX(fidx, V=vertices(G)) = [(i-1)*p+j for i in V for j in fidx];
@@ -59,9 +62,14 @@ b0 = [zeros(s[j]) for j in 1:p2];
 φ = param(zeros(div(p*(p+1),2)+1));
 W = [param(W_) for W_ in W0];
 b = [param(b_) for b_ in b0];
-μ = [param(randn(d[j], s[j])) for j in 1:p2];
-logσ = [param(randn(d[j], s[j])) for j in 1:p2];
-η = [param(randn(d[j], s[j])) for j in 1:p2];
+
+# μ = [param(randn(d[j], s[j])) for j in 1:p2];
+# logσ = [param(randn(d[j], s[j])) for j in 1:p2];
+# η = [param(randn(d[j], s[j])) for j in 1:p2];
+
+μ = [param(zeros(d[j], s[j])) for j in 1:p2];
+logσ = [param(zeros(d[j], s[j])) for j in 1:p2];
+η = [param(zeros(d[j], s[j])) for j in 1:p2];
 
 logPX(Z) = [logsoftmax(tsctc(W_,Z_) .+ repeat(b_,1,n,size(Z_,3)), dims=1) for (W_,Z_,b_) in zip(W,Z,b)];
 
@@ -76,7 +84,8 @@ X = [begin
      end for logPX_ in logPX(Z)];
 
 getα() = vcat(φ[1:p], φ[p+1:end-1]);
-getβ() = exp(φ[end]);
+# getβ() = exp(φ[end]);
+getβ() = param(1.0);
 
 # return normal distribution with diagonal covariance matrix, conditioned on X
 function Qzμσ0(X, Y)
@@ -105,7 +114,12 @@ function Qzμσ1(X, Y)
 end
 
 # sample normal distribution with diagonal covariance matrix
-sample_μσ(μZ, σZ) = [μZ_ + σZ_ .* randn(size(σZ_)) for (μZ_, σZ_) in zip(μZ, σZ)];
+
+function sample_μσ(μZ, σZ)
+    ZS = [μZ_ + σZ_ .* randn(size(σZ_)) for (μZ_, σZ_) in zip(μZ, σZ)];
+
+    return ZS;
+end
 
 # return skewed normal distribution with diagonal covariance matrix, conditioned on X
 function Qzμση0(X, Y)
@@ -117,21 +131,27 @@ function Qzμση0(X, Y)
 end
 
 # sample skewed normal distribution with diagonal covariance matrix
-sample_μση(μZ, σZ, ηZ) = [begin
-                              d_, batch_size, etype = size(μZ_,1), size(μZ_,3), eltype(μZ_);
+function sample_μση(μZ, σZ, ηZ)
+    ZS = [];
+    for (μZ_, σZ_, ηZ_) in zip(μZ, σZ, ηZ)
+        d_, batch_size, etype = size(μZ_,1), size(μZ_,3), eltype(μZ_);
 
-                              δZ_ = (σZ_.^2 .* ηZ_) ./ sqrt.(1 .+ sum(σZ_.^2 .* ηZ_.^2, dims=1));
-                              ZS_ = Array{etype}(undef, size(μZ_)...);
-                              for j in 1:n
-                                  for k in 1:batch_size
-                                      CM_ = Array{etype}(undef, d_,d_);
-                                      CM_ .= diagm(0=>σZ_[:,j,k].^2) - δZ_[:,j,k] * δZ_[:,j,k]';
-                                      ZS_[:,j,k] .= μZ_[:,j,k] .+ δZ_[:,j,k] * abs(randn()) + Tracker.collect(cholesky(CM_).U * randn(d_));
-                                  end
-                              end
+        δZ_ = (σZ_ .* σZ_ .* ηZ_) ./ sqrt.(1 .+ sum((σZ_ .* ηZ_) .* (σZ_ .* ηZ_), dims=1));
+        ZS_ = Array{etype}(undef, size(μZ_)...);
+        for j in 1:n
+            for k in 1:batch_size
+                CM_ = Array{etype}(undef, d_,d_);
+                CM_ .= diagm(0=>σZ_[:,j,k] .* σZ_[:,j,k]) - δZ_[:,j,k] * δZ_[:,j,k]';
+                ZS_[:,j,k] .= μZ_[:,j,k] .+ δZ_[:,j,k] * abs(randn()) + Tracker.collect(cholesky(CM_).U * randn(d_));
+            end
+        end
 
-                              Tracker.collect(ZS_);
-                          end for (μZ_, σZ_, ηZ_) in zip(μZ, σZ, ηZ)];
+        push!(ZS, Tracker.collect(ZS_));
+    end
+
+    return ZS;
+end
+
 function H_N(μ, σ)
     """
     Args:
@@ -149,6 +169,7 @@ function H_N(μ, σ)
     return H0;
 end
 
+glx, glw = gausslaguerre(glm, reduced=true);
 function H_SN(μ, σ, η)
     """
     Args:
@@ -165,16 +186,14 @@ function H_SN(μ, σ, η)
     ϕ(x) = exp(-0.5*x^2.0) / sqrt(2π);
     Φ(x) = 0.5 * (1.0 + erf(x/√2));
 
-    τ = sum((η .* σ).^2.0);
-    ω = sqrt(τ);
-    α = sqrt(τ);
+    τ = norm(η .* σ);
 
-    fp(x) = (f = 2*ϕ(x) * Φ(α*x);  (f != 0.0) && (f *= log(2*Φ(ω*x))); f);
-    fm(x) = (f = 2*ϕ(x) * Φ(-α*x); (f != 0.0) && (f *= log(2*Φ(-ω*x))); f);
+    fp(x) = (f = 2*ϕ(x) * Φ( τ*x); (f != 0.0) && (f *= log(2*Φ( τ*x))); f);
+    fm(x) = (f = 2*ϕ(x) * Φ(-τ*x); (f != 0.0) && (f *= log(2*Φ(-τ*x))); f);
 
     H0 = 0.5 * k + 0.5 * k * log(2π) + sum(log.(σ));
 
-    return H0 - quadgk(fp, -Inf, Inf)[1];
+    return H0 - (sum(glw .* fp.(glx) .* exp.(glx)) + sum(glw .* fm.(glx) .* exp.(glx)));
 end
 
 Qz, sample_Qz, H = Qzμση0, sample_μση, H_SN;
@@ -189,7 +208,7 @@ function Equadform(X, Y)
         EZS = cat(μZ..., dims=1);
     elseif length(pZ) == 3
         μZ, σZ, ηZ = pZ;
-        δZ = [(σZ_.^2 .* ηZ_) ./ sqrt.(1 .+ sum(σZ_.^2 .* ηZ_.^2, dims=1)) for (σZ_,ηZ_) in zip(σZ,ηZ)];
+        δZ = [(σZ_ .* σZ_ .* ηZ_) ./ sqrt.(1 .+ sum((σZ_ .* ηZ_) .* (σZ_ .* ηZ_), dims=1)) for (σZ_,ηZ_) in zip(σZ,ηZ)];
         EZS = cat(μZ..., dims=1) + sqrt(2/π) * cat(δZ..., dims=1);
     else
         error("unexpected length of pZ");
@@ -216,9 +235,9 @@ function Etrace(X, Y)
         Var = (i,j,k) -> diagm(0=>σZ[k][:,i,j].^2.0);
     elseif length(pZ) == 3
         μZ, σZ, ηZ = pZ;
-        δZ = [(σZ_.^2 .* ηZ_) ./ sqrt.(1 .+ sum(σZ_.^2 .* ηZ_.^2, dims=1)) for (σZ_,ηZ_) in zip(σZ,ηZ)];
+        δZ = [(σZ_ .* σZ_ .* ηZ_) ./ sqrt.(1 .+ sum((σZ_ .* ηZ_) .* (σZ_ .* ηZ_), dims=1)) for (σZ_,ηZ_) in zip(σZ,ηZ)];
 
-        Var = (i,j,k) -> diagm(0=>σZ[k][:,i,j].^2.0) - 2/π * δZ[k][:,i,j] * δZ[k][:,i,j]';
+        Var = (i,j,k) -> diagm(0=>σZ[k][:,i,j] .* σZ[k][:,i,j]) - 2/π * δZ[k][:,i,j] * δZ[k][:,i,j]';
     else
         error("unexpected length of pZ");
     end
@@ -264,10 +283,23 @@ function loss(X, Y)
     return -Ω;
 end
 
-dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:50000];
+dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:10000];
 
 print_params() = @printf("α:  %s,    β:  %10.3f\n", array2str(getα()), getβ());
-train!(loss, Flux.params(φ, μ..., logσ..., η...), dat, Descent(0.01), cb = throttle(print_params, 10));
+train!(loss, Flux.params(φ, μ..., logσ..., η...), dat, ADAM(0.01), cb = throttle(print_params, 1));
+
+function plot_SN!(h, μ, η, logσ)
+    ϕ(x) = exp(-0.5*x^2.0) / sqrt(2π);
+    Φ(x) = 0.5 * (1.0 + erf(x/√2));
+    f(x) = 2 * ϕ((x-μ)/exp(logσ)) * Φ(η*(x-μ)/exp(logσ));
+
+    Plots.plot!(h, -3.0:0.01:3.0, data.(f.(-3.0:0.01:3.0)));
+end
+
+h = Plots.plot();
+plot_SN!(h, μ[1][1], η[1][1], logσ[1][1]);
+plot_SN!(h, μ[1][2], η[1][2], logσ[1][2]);
+display(h);
 
 
 #----------------------------------------------------
