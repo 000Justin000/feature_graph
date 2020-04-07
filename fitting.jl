@@ -19,7 +19,7 @@ Random.seed!(0);
 G = complete_graph(2);
 
 p1 = 0;
-p2, s, d = 1, [2], [1];
+p2, s, d = 1, [2], [2];
 t, k, glm = 128, 32, 100;
 
 p = p1 + sum(d);
@@ -38,10 +38,10 @@ V = collect(1:size(A[1],1));
 L = FIDX(1:p1);
 U = setdiff(V,L);
 
-α0 = vcat(ones(p)*5.0, ones(div(p*(p-1),2))*5.0);
+α0 = vcat(ones(p)*1.0, ones(div(p*(p-1),2))*-1.0);
+# β0 = exp(randn());
 # α0 = vcat(randn(p), randn(div(p*(p-1),2)));
 β0 = 1.0;
-# β0 = exp(randn());
 CM0 = inv(Array(getΓ(α0, β0; A=A)));
 CM = (CM0 + CM0')/2.0;
 g = MvNormal(CM);
@@ -53,20 +53,13 @@ Z = [YZ[cr_,:,:] for cr_ in cr];
 
 tsctc(A, B) = reshape(A * reshape(B, (size(B,1), :)), (size(A,1), size(B)[2:end]...));
 
-W0 = [[-5.0, 5.0] for j in 1:p2];
-# W0 = [diagm(0=>ones(s[j])*5.0) for j in 1:p2];
-# W0 = [randn(s[j], d[j]) for j in 1:p2];
-
+# W0 = [[-5.0, 5.0] for j in 1:p2];
+W0 = [diagm(0=>ones(s[j])*5.0) for j in 1:p2];
 b0 = [zeros(s[j]) for j in 1:p2];
 
 φ = param(zeros(div(p*(p+1),2)+1));
 W = [param(W_) for W_ in W0];
 b = [param(b_) for b_ in b0];
-
-# μ = [param(randn(d[j], s[j])) for j in 1:p2];
-# logσ = [param(randn(d[j], s[j])) for j in 1:p2];
-# η = [param(randn(d[j], s[j])) for j in 1:p2];
-
 μ = [param(zeros(d[j], s[j])) for j in 1:p2];
 logσ = [param(zeros(d[j], s[j])) for j in 1:p2];
 η = [param(zeros(d[j], s[j])) for j in 1:p2];
@@ -84,8 +77,8 @@ X = [begin
      end for logPX_ in logPX(Z)];
 
 getα() = vcat(φ[1:p], φ[p+1:end-1]);
-# getβ() = exp(φ[end]);
-getβ() = param(1.0);
+getβ() = exp(φ[end]);
+# getβ() = param(1.0);
 
 # return normal distribution with diagonal covariance matrix, conditioned on X
 function Qzμσ0(X, Y)
@@ -196,7 +189,8 @@ function H_SN(μ, σ, η)
     return H0 - (sum(glw .* fp.(glx) .* exp.(glx)) + sum(glw .* fm.(glx) .* exp.(glx)));
 end
 
-Qz, sample_Qz, H = Qzμση0, sample_μση, H_SN;
+Qz, sample_Qz, H = Qzμσ0, sample_μσ, H_N;
+# Qz, sample_Qz, H = Qzμση0, sample_μση, H_SN;
 
 function Equadform(X, Y)
     batch_size = size(Y,3);
@@ -283,22 +277,26 @@ function loss(X, Y)
     return -Ω;
 end
 
-dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:10000];
+dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:1000];
 
 print_params() = @printf("α:  %s,    β:  %10.3f\n", array2str(getα()), getβ());
-train!(loss, Flux.params(φ, μ..., logσ..., η...), dat, ADAM(0.01), cb = throttle(print_params, 1));
+train!(loss, Flux.params(φ, μ..., logσ..., η...), dat, Descent(0.01), cb = throttle(print_params, 1));
 
-function plot_SN!(h, μ, η, logσ)
+function plot_SN!(h, μ, η, logσ; kwargs...)
     ϕ(x) = exp(-0.5*x^2.0) / sqrt(2π);
     Φ(x) = 0.5 * (1.0 + erf(x/√2));
     f(x) = 2 * ϕ((x-μ)/exp(logσ)) * Φ(η*(x-μ)/exp(logσ));
 
-    Plots.plot!(h, -3.0:0.01:3.0, data.(f.(-3.0:0.01:3.0)));
+    Plots.plot!(h, -3.0:0.01:3.0, data.(f.(-3.0:0.01:3.0)) * 500; kwargs...);
 end
 
-h = Plots.plot();
-plot_SN!(h, μ[1][1], η[1][1], logσ[1][1]);
-plot_SN!(h, μ[1][2], η[1][2], logσ[1][2]);
+h = Plots.plot(framestyle=:box);
+XV = reshape(X[1], (2, 8192));
+ZV = reshape(Z[1], (8192));
+histogram!(h, ZV[XV[1,:] .== 1], label="-, data", color=1);
+histogram!(h, ZV[XV[2,:] .== 1], label="+, data", color=2);
+plot_SN!(h, μ[1][1], η[1][1], logσ[1][1]; linewidth=5.0, label="-, learned", color="black");
+plot_SN!(h, μ[1][2], η[1][2], logσ[1][2]; linewidth=5.0, label="+, learned", color="grey");
 display(h);
 
 
