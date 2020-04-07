@@ -26,8 +26,8 @@ p = p1 + sum(d);
 n = nv(G);
 A = getA(G, p);
 D = A2D.(A);
-N = 4096;
-n_batch = 8;
+N = 1000;
+n_batch = 32;
 
 FIDX(fidx, V=vertices(G)) = [(i-1)*p+j for i in V for j in fidx];
 ss = vcat(0, cumsum(d)[1:end-1]) .+ 1;
@@ -38,10 +38,10 @@ V = collect(1:size(A[1],1));
 L = FIDX(1:p1);
 U = setdiff(V,L);
 
-α0 = vcat(ones(p)*1.0, ones(div(p*(p-1),2))*-1.0);
-# β0 = exp(randn());
-# α0 = vcat(randn(p), randn(div(p*(p-1),2)));
+α0 = vcat(ones(p), -ones(div(p*(p-1),2)));
 β0 = 1.0;
+# α0 = vcat(randn(p), randn(div(p*(p-1),2)));
+# β0 = exp(randn());
 CM0 = inv(Array(getΓ(α0, β0; A=A)));
 CM = (CM0 + CM0')/2.0;
 g = MvNormal(CM);
@@ -220,7 +220,7 @@ function Etrace(X, Y)
     pZ = Qz(X, Y);
 
     Γ = getΓ(getα(), getβ(); A=A);
-    Gm(i,k) = (idx = FIDX([k],[i]); Tracker.collect(Γ[idx,idx]));
+    Gm(i,k) = (idx = FIDX(p1+ss[k]:p1+ff[k],[i]); Tracker.collect(Γ[idx,idx]));
 
     if length(pZ) == 2
         μZ, σZ = pZ;
@@ -277,27 +277,27 @@ function loss(X, Y)
     return -Ω;
 end
 
-dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:1000];
+dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:10000];
 
 print_params() = @printf("α:  %s,    β:  %10.3f\n", array2str(getα()), getβ());
 train!(loss, Flux.params(φ, μ..., logσ..., η...), dat, Descent(0.01), cb = throttle(print_params, 1));
 
-function plot_SN!(h, μ, η, logσ; kwargs...)
-    ϕ(x) = exp(-0.5*x^2.0) / sqrt(2π);
-    Φ(x) = 0.5 * (1.0 + erf(x/√2));
-    f(x) = 2 * ϕ((x-μ)/exp(logσ)) * Φ(η*(x-μ)/exp(logσ));
-
-    Plots.plot!(h, -3.0:0.01:3.0, data.(f.(-3.0:0.01:3.0)) * 500; kwargs...);
-end
-
-h = Plots.plot(framestyle=:box);
-XV = reshape(X[1], (2, 8192));
-ZV = reshape(Z[1], (8192));
-histogram!(h, ZV[XV[1,:] .== 1], label="-, data", color=1);
-histogram!(h, ZV[XV[2,:] .== 1], label="+, data", color=2);
-plot_SN!(h, μ[1][1], η[1][1], logσ[1][1]; linewidth=5.0, label="-, learned", color="black");
-plot_SN!(h, μ[1][2], η[1][2], logσ[1][2]; linewidth=5.0, label="+, learned", color="grey");
-display(h);
+# function plot_SN!(h, μ, η, logσ; kwargs...)
+#     ϕ(x) = exp(-0.5*x^2.0) / sqrt(2π);
+#     Φ(x) = 0.5 * (1.0 + erf(x/√2));
+#     f(x) = 2 * ϕ((x-μ)/exp(logσ)) * Φ(η*(x-μ)/exp(logσ));
+#
+#     Plots.plot!(h, -3.0:0.01:3.0, data.(f.(-3.0:0.01:3.0)) * 500; kwargs...);
+# end
+#
+# h = Plots.plot(framestyle=:box);
+# XV = reshape(X[1], (2, 8192));
+# ZV = reshape(Z[1], (8192));
+# histogram!(h, ZV[XV[1,:] .== 1], label="-, data", color=1);
+# histogram!(h, ZV[XV[2,:] .== 1], label="+, data", color=2);
+# plot_SN!(h, μ[1][1], η[1][1], logσ[1][1]; linewidth=5.0, label="-, learned", color="black");
+# plot_SN!(h, μ[1][2], η[1][2], logσ[1][2]; linewidth=5.0, label="+, learned", color="grey");
+# display(h);
 
 
 #----------------------------------------------------
