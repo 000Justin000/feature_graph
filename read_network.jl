@@ -168,7 +168,7 @@ function read_transportation_network(network_name, net_skips, net_cols, netf_col
     NV = length(V);
 
     g = DiGraph(NV);
-    for i in 1:size(dat_net,1)
+    for i in 1:size(dat_net,1)dim_embed
         src, dst = dat_net[i,1], dat_net[i,2];
         if haskey(lb2id, src) && haskey(lb2id, dst)
             add_edge!(g, lb2id[src], lb2id[dst]);
@@ -223,7 +223,7 @@ function read_transportation_network(network_name, net_skips, net_cols, netf_col
         outnbrs = outneighbors(g, u);
 
         for v in innbrs
-            for w in outnbrs
+            for w in outnbrs, dim_reduction=false
                 add_edge!(G1, tuple2id[(v,u)], tuple2id[(u,w)]);
             end
         end
@@ -290,6 +290,38 @@ function read_sexual(studynum)
     return G, [adjacency_matrix(G)], y, f;
 end
 
+function read_cora(dim_reduction=false, dim_embed=8)
+    cnt = CSV.read("datasets/cora/cora.content", header=0);
+    cls = sort(unique(cnt[:,end]));
+    cid2num = Dict(id=>num for (num,id) in enumerate(cls));
+    pubs = cnt[:,1];
+
+    adj = CSV.read("datasets/cora/cora.cites", header=0);
+    hh = adj[:,1];
+    tt = adj[:,2];
+    @assert all(sort(pubs) .== sort(unique(union(hh,tt)))) "unexpected citation graph";
+    pid2num = Dict(id=>num for (num,id) in enumerate(pubs));
+    g = Graph(length(pid2num));
+    for (h,t) in zip(hh,tt)
+        add_edge!(g, pid2num[h], pid2num[t]);
+    end
+
+    y = map(x->cid2num[x], Array(cnt[:,end]));
+
+    ff = Matrix(cnt[:,2:end-1]) .* 2.0 .- 1.0;
+    f = [ff[i,:] for i in 1:size(ff,1)];
+
+    if dim_reduction
+        U,S,V = svds(hcat(f...); nsv=dim_embed)[1];
+        UU = U .* sign.(sum(U,dims=1)[:])';
+        f = [UU'*f_ for f_ in f];
+        fbar = mean(f);
+        f = [f_ - fbar for f_ in f];
+    end
+
+    return g, [adjacency_matrix(g)], f, y;
+end
+
 function read_network(network_name)
     (p = match(r"ising_([0-9]+)_([0-9\.\-]+)_([0-9\.\-]+)$", network_name)) != nothing && return simulate_ising(parse(Int, p[1]), parse(Float64, p[2]), parse(Float64, p[3]));
     (p = match(r"county_([a-z]+)_([0-9]+)$", network_name)) != nothing && return read_county(p[1], parse(Int, p[2]));
@@ -297,4 +329,5 @@ function read_network(network_name)
     (p = match(r"sexual_([0-9]+)$", network_name)) != nothing && return read_sexual(parse(Int, p[1]));
     (p = match(r"Anaheim", network_name)) != nothing       && return read_transportation_network(network_name, 8, 1:2, [3,4,5,8], 6, [1,2,4], 1:416);
     (p = match(r"ChicagoSketch", network_name)) != nothing && return read_transportation_network(network_name, 7, 1:2, [3,4,5,8], 1, [1,2,3], 388:933);
+    (p = match(r"Cora_([a-z]+)_([0-9]+)", network_name)) != nothing && return read_cora(parse(Bool, p[1]), parse(Int, p[2]));
 end

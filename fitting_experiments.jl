@@ -10,24 +10,26 @@ using FastGaussQuadrature;
 using SpecialFunctions;
 using Random;
 
+include("read_network.jl");
 include("utils.jl");
 include("kernels.jl");
 
 Random.seed!(0);
 
+G, A, feats, labels = read_network("Cora_true_8");
 # G = watts_strogatz(10, 4, 0.3);
-G = complete_graph(2);
+# G = complete_graph(2);
 
-p1 = 0;
-p2, s, d = 1, [2], [2];
+p1 = 8;
+p2, s, d = 1, [7], [7];
 t, k, glm = 128, 32, 100;
 
 p = p1 + sum(d);
 n = nv(G);
 A = getA(G, p);
 D = A2D.(A);
-N = 1024;
-n_batch = 32;
+N = 1;
+n_batch = 1;
 
 FIDX(fidx, V=vertices(G)) = [(i-1)*p+j for i in V for j in fidx];
 ss = vcat(0, cumsum(d)[1:end-1]) .+ 1;
@@ -38,18 +40,19 @@ V = collect(1:size(A[1],1));
 L = FIDX(1:p1);
 U = setdiff(V,L);
 
-α0 = vcat(ones(p), -ones(div(p*(p-1),2)));
-β0 = 1.0;
-# α0 = vcat(randn(p), randn(div(p*(p-1),2)));
-# β0 = exp(randn());
-CM0 = inv(Array(getΓ(α0, β0; A=A)));
-CM = (CM0 + CM0')/2.0;
-g = MvNormal(CM);
-YZ = cat([reshape(rand(g), (p,n)) for _ in 1:N]..., dims=3);
-Y = YZ[1:p1,:,:];
-Z = [YZ[cr_,:,:] for cr_ in cr];
+Y = reshape(hcat([feat for feat in feats]...), (p1,n,1));
+X = [reshape(hcat([convert(Array{Float64}, Flux.onehot(label, 1:7)) for label in labels]...), (7,n,1))];
 
-@printf("α0: %s,    β0: %10.3f\n", array2str(α0), β0);
+# α0 = vcat(ones(p), -ones(div(p*(p-1),2)));
+# β0 = 1.0;
+# # α0 = vcat(randn(p), randn(div(p*(p-1),2)));
+# # β0 = exp(randn());
+# CM0 = inv(Array(getΓ(α0, β0; A=A)));
+# CM = (CM0 + CM0')/2.0;
+# g = MvNormal(CM);
+# YZ = cat([reshape(rand(g), (p,n)) for _ in 1:N]..., dims=3);
+# Y = YZ[1:p1,:,:];
+# Z = [YZ[cr_,:,:] for cr_ in cr];
 
 tsctc(A, B) = reshape(A * reshape(B, (size(B,1), :)), (size(A,1), size(B)[2:end]...));
 
@@ -67,15 +70,15 @@ logσ = [param(zeros(d[j], s[j])) for j in 1:p2];
 
 logPX(Z) = [logsoftmax(tsctc(W_,Z_) .+ repeat(b_,1,n,size(Z_,3)), dims=1) for (W_,Z_,b_) in zip(W,Z,b)];
 
-X = [begin
-        x = zeros(size(logPX_));
-        for j in 1:size(logPX_,2)
-            for k in 1:size(logPX_,3)
-                x[sample(Weights(exp.(logPX_[:,j,k]))),j,k] = 1;
-            end
-        end
-        x;
-     end for logPX_ in logPX(Z)];
+# X = [begin
+#         x = zeros(size(logPX_));
+#         for j in 1:size(logPX_,2)
+#             for k in 1:size(logPX_,3)
+#                 x[sample(Weights(exp.(logPX_[:,j,k]))),j,k] = 1;
+#             end
+#         end
+#         x;
+#      end for logPX_ in logPX(Z)];
 
 getα() = vcat(φ[1:p], φ[p+1:end-1]);
 getβ() = exp(φ[end]);
@@ -190,8 +193,8 @@ function H_SN(μ, σ, η)
 end
 
 # Qz, sample_Qz, H = Qzμσ0, sample_μσ, H_N;
-# Qz, sample_Qz, H = Qzμσ1, sample_μσ, H_N;
-Qz, sample_Qz, H = Qzμση0, sample_μση, H_SN;
+Qz, sample_Qz, H = Qzμσ1, sample_μσ, H_N;
+# Qz, sample_Qz, H = Qzμση0, sample_μση, H_SN;
 
 function Equadform(X, Y)
     batch_size = size(Y,3);
@@ -268,10 +271,7 @@ function EQzlogPX(X, Y)
     return Ω / batch_size;
 end
 
-ct = 0
 function loss(X, Y)
-    global ct+=1; println(ct);
-
     Ω = 0.5 * logdetΓ(getα(), getβ(); A=A, P=V, t=t, k=k);
     Ω -= 0.5 * Equadform(X,Y);
     Ω -= 0.5 * Etrace(X,Y);
@@ -283,8 +283,8 @@ end
 
 dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:1000];
 
-print_params() = (@printf("α:  %s,    β:  %10.3f\n", array2str(getα()), getβ()); display(μ); display(logσ); display(η));
-train!(loss, Flux.params(φ, μ..., logσ..., η...), dat, ADAM(0.01), cb = print_params);
+print_params() = @printf("α:  %s,    β:  %10.3f\n", array2str(getα()), getβ());
+train!(loss, Flux.params(φ, μ..., logσ...), dat, ADAM(0.01), cb = print_params);
 
 # function plot_SN!(h, μ, η, logσ; kwargs...)
 #     ϕ(x) = exp(-0.5*x^2.0) / sqrt(2π);

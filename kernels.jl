@@ -234,3 +234,51 @@ function test_quadformSC(n=100)
     reset_grad!(p, rL);
     #------------------------
 end
+
+chol(A::TrackedArray) = track(chol, A);
+@grad function chol(A)
+    A = data(A);
+    CF = cholesky(A);
+    L, U = CF.L, CF.U;
+
+    Φ(A) = LowerTriangular(A) - 0.5 * Diagonal(A);
+
+    function sensitivity(ΔL)
+        S = inv(U) * Φ(U * LowerTriangular(ΔL)) * inv(L);
+        return tuple(Matrix(S + S' - Diagonal(S)));
+    end
+
+    return Matrix(L), sensitivity;
+end
+
+function test_chol(n=10)
+    X = randn(n,n);
+    A0 = X * X';
+    A = param(A0);
+    b = randn(n);
+
+    Ω(A, b) = b' * A * b;
+    Tracker.back!(Ω(chol(A), b), 1);
+    @printf("reverse-mode automatic differentiation\n");
+    display(A.grad);
+    @printf("\n\n");
+
+    ϵ = 1.0e-6;
+
+    sen = zeros(n,n);
+    for i in 1:n
+        for j in 1:n
+            Ap, Am = Array(A0), Array(A0);
+            Ap[i,j] += ((i == j) ? ϵ/2 : ϵ);
+            Ap[j,i] += ((i == j) ? ϵ/2 : ϵ);
+            Am[i,j] -= ((i == j) ? ϵ/2 : ϵ);
+            Am[j,i] -= ((i == j) ? ϵ/2 : ϵ);
+
+            sen[i,j] = (Ω(cholesky(Ap).L, b) - Ω(cholesky(Am).L, b)) / (2 * ϵ);
+            sen[j,i] = (Ω(cholesky(Ap).L, b) - Ω(cholesky(Am).L, b)) / (2 * ϵ);
+        end
+    end
+
+    @printf("finite-difference\n");
+    display(sen);
+end
