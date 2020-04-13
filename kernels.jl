@@ -245,7 +245,8 @@ chol(A::TrackedArray) = track(chol, A);
 
     function sensitivity(ΔL)
         S = inv(U) * Φ(U * LowerTriangular(ΔL)) * inv(L);
-        return tuple(Matrix(S + S' - Diagonal(S)));
+        # return tuple(Matrix(S + S' - Diagonal(S)));
+        return tuple(Matrix(0.5 * (S + S')));
     end
 
     return Matrix(L), sensitivity;
@@ -258,24 +259,33 @@ function test_chol(n=10)
     b = randn(n);
 
     Ω(A, b) = b' * A * b;
+
+    reset_grad!(A);
     Tracker.back!(Ω(chol(A), b), 1);
     @printf("reverse-mode automatic differentiation\n");
     display(A.grad);
     @printf("\n\n");
 
-    ϵ = 1.0e-6;
+    B = Matrix{eltype(A)}(undef, n, n);
+    B .= A;
+    reset_grad!(A);
+    Tracker.back!(Ω(cholesky(B).L, b), 1);
+    @printf("elementwise automatic differentation\n");
+    display(A.grad);
+    @printf("\n\n");
 
+    ϵ = 1.0e-6;
     sen = zeros(n,n);
     for i in 1:n
         for j in 1:n
             Ap, Am = Array(A0), Array(A0);
-            Ap[i,j] += ((i == j) ? ϵ/2 : ϵ);
-            Ap[j,i] += ((i == j) ? ϵ/2 : ϵ);
-            Am[i,j] -= ((i == j) ? ϵ/2 : ϵ);
-            Am[j,i] -= ((i == j) ? ϵ/2 : ϵ);
+            Ap[i,j] += ϵ;
+            Ap[j,i] += ϵ;
+            Am[i,j] -= ϵ    ;
+            Am[j,i] -= ϵ;
 
-            sen[i,j] = (Ω(cholesky(Ap).L, b) - Ω(cholesky(Am).L, b)) / (2 * ϵ);
-            sen[j,i] = (Ω(cholesky(Ap).L, b) - Ω(cholesky(Am).L, b)) / (2 * ϵ);
+            sen[i,j] = (Ω(cholesky(Ap).L, b) - Ω(cholesky(Am).L, b)) / (4 * ϵ);
+            sen[j,i] = (Ω(cholesky(Ap).L, b) - Ω(cholesky(Am).L, b)) / (4 * ϵ);
         end
     end
 

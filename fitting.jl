@@ -81,6 +81,12 @@ getα() = vcat(φ[1:p], φ[p+1:end-1]);
 getβ() = exp(φ[end]);
 # getβ() = param(1.0);
 
+# TO BE VERIFIED
+# (σZ_ .* σZ_ .* ηZ_) ./ sqrt.(1 .+ sum((σZ_ .* ηZ_) .* (σZ_ .* ηZ_), dims=1));
+# (σZ_ .* ηZ_) ./ sqrt.(1 .+ sum(ηZ_ .* ηZ_, dims=1));
+# rho(σZ_, ηZ_) = (σZ_ .* σZ_ .* ηZ_) ./ sqrt.(1 .+ sum((σZ_ .* ηZ_) .* (σZ_ .* ηZ_), dims=1));
+rho(σZ_, ηZ_) = (σZ_ .* ηZ_) ./ sqrt.(1 .+ sum(ηZ_ .* ηZ_, dims=1));
+
 # return normal distribution with diagonal covariance matrix, conditioned on X
 function Qzμσ0(X, Y)
     μZ0 = [tsctc(μ_, X_) for (μ_, X_) in zip(μ, X)];
@@ -130,12 +136,12 @@ function sample_μση(μZ, σZ, ηZ)
     for (μZ_, σZ_, ηZ_) in zip(μZ, σZ, ηZ)
         d_, batch_size, etype = size(μZ_,1), size(μZ_,3), eltype(μZ_);
 
-        δZ_ = (σZ_ .* σZ_ .* ηZ_) ./ sqrt.(1 .+ sum((σZ_ .* ηZ_) .* (σZ_ .* ηZ_), dims=1));
+        ρZ_ = rho(σZ_, ηZ_);
         ZS_ = Array{etype}(undef, size(μZ_)...);
         for j in 1:n
             for k in 1:batch_size
-                CM_ = diagm(0=>σZ_[:,j,k] .* σZ_[:,j,k]) - δZ_[:,j,k] * δZ_[:,j,k]';
-                ZS_[:,j,k] .= μZ_[:,j,k] .+ δZ_[:,j,k] * abs(randn()) + chol(CM_) * randn(d_);
+                CM_ = diagm(0=>σZ_[:,j,k] .* σZ_[:,j,k]) - ρZ_[:,j,k] * ρZ_[:,j,k]';
+                ZS_[:,j,k] .= μZ_[:,j,k] .+ ρZ_[:,j,k] * abs(randn()) + chol(CM_) * randn(d_);
             end
         end
 
@@ -174,15 +180,15 @@ function H_SN(μ, σ, η)
         entropy of the skewed Gaussian
     """
     @assert length(μ) == length(σ) == length(η);
-    k = length(μ);
+        k = length(μ);
 
     ϕ(x) = exp(-0.5*x^2.0) / sqrt(2π);
     Φ(x) = 0.5 * (1.0 + erf(x/√2));
 
-    τ = norm(η .* σ);
+    τ = norm(η);
 
-    fp(x) = (f = 2*ϕ(x) * Φ( τ*x); (f != 0.0) && (f *= log(2*Φ( τ*x))); f);
-    fm(x) = (f = 2*ϕ(x) * Φ(-τ*x); (f != 0.0) && (f *= log(2*Φ(-τ*x))); f);
+    fp(x) = (f = 2*ϕ(x)*Φ( τ*x); (f != 0.0) && (f *= log(2*Φ( τ*x))); f);
+    fm(x) = (f = 2*ϕ(x)*Φ(-τ*x); (f != 0.0) && (f *= log(2*Φ(-τ*x))); f);
 
     H0 = 0.5 * k + 0.5 * k * log(2π) + sum(log.(σ));
 
@@ -203,8 +209,8 @@ function Equadform(X, Y)
         EZS = cat(μZ..., dims=1);
     elseif length(pZ) == 3
         μZ, σZ, ηZ = pZ;
-        δZ = [(σZ_ .* σZ_ .* ηZ_) ./ sqrt.(1 .+ sum((σZ_ .* ηZ_) .* (σZ_ .* ηZ_), dims=1)) for (σZ_,ηZ_) in zip(σZ,ηZ)];
-        EZS = cat(μZ..., dims=1) + sqrt(2/π) * cat(δZ..., dims=1);
+        ρZ = [rho(σZ_, ηZ_) for (σZ_,ηZ_) in zip(σZ,ηZ)];
+        EZS = cat(μZ..., dims=1) + sqrt(2/π) * cat(ρZ..., dims=1);
     else
         error("unexpected length of pZ");
     end
@@ -225,14 +231,14 @@ function Etrace(X, Y)
 
     if length(pZ) == 2
         μZ, σZ = pZ;
-        δZ = nothing;
+        ρZ = nothing;
 
         Var = (i,j,k) -> diagm(0=>σZ[k][:,i,j].^2.0);
     elseif length(pZ) == 3
         μZ, σZ, ηZ = pZ;
-        δZ = [(σZ_ .* σZ_ .* ηZ_) ./ sqrt.(1 .+ sum((σZ_ .* ηZ_) .* (σZ_ .* ηZ_), dims=1)) for (σZ_,ηZ_) in zip(σZ,ηZ)];
+        ρZ = [rho(σZ_, ηZ_) for (σZ_,ηZ_) in zip(σZ,ηZ)];
 
-        Var = (i,j,k) -> diagm(0=>σZ[k][:,i,j] .* σZ[k][:,i,j]) - 2/π * δZ[k][:,i,j] * δZ[k][:,i,j]';
+        Var = (i,j,k) -> diagm(0=>σZ[k][:,i,j] .* σZ[k][:,i,j]) - 2/π * ρZ[k][:,i,j] * ρZ[k][:,i,j]';
     else
         error("unexpected length of pZ");
     end
@@ -268,10 +274,7 @@ function EQzlogPX(X, Y)
     return Ω / batch_size;
 end
 
-ct = 0
 function loss(X, Y)
-    global ct+=1; println(ct);
-
     Ω = 0.5 * logdetΓ(getα(), getβ(); A=A, P=V, t=t, k=k);
     Ω -= 0.5 * Equadform(X,Y);
     Ω -= 0.5 * Etrace(X,Y);
@@ -281,10 +284,14 @@ function loss(X, Y)
     return -Ω;
 end
 
-dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:1000];
+dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:10000];
 
-print_params() = (@printf("α:  %s,    β:  %10.3f\n", array2str(getα()), getβ()); display(μ); display(logσ); display(η));
-train!(loss, Flux.params(φ, μ..., logσ..., η...), dat, ADAM(0.01), cb = print_params);
+ct = 0;
+print_params() = (global ct += 1;
+                  @printf("%5d,  loss:  %10.3f,  α:  %s,  β:  %10.3f,  μ:  %s,  logσ:  %s,  η:  %s\n",
+                  ct, loss(dat[end][1],dat[end][2]), array2str(getα()), getβ(),
+                  array2str(μ[1][:]), array2str(logσ[1][:]), array2str(η[1][:])));
+train!(loss, Flux.params(φ, μ..., logσ..., η...), dat, Descent(0.01); cb = print_params);
 
 # function plot_SN!(h, μ, η, logσ; kwargs...)
 #     ϕ(x) = exp(-0.5*x^2.0) / sqrt(2π);
