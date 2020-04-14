@@ -73,7 +73,7 @@ function mBCG(mmm_A::Function, B::Array{Float64,2}; PC::Function=Y->Y, k::Int=si
 end
 
 function getΓ(α, β; A)
-    return β * I + β * sum([(abs(α_)*D_ - α_*A_) for (α_,D_,A_) in zip(α,A2D.(A),A)]);
+    return β * spdiagm(0=>ones(size(A[1],1))) + β * sum([(abs(α_)*D_ - α_*A_) for (α_,D_,A_) in zip(α,A2D.(A),A)]);
 end
 
 function get∂Γ∂α(α, β; A)
@@ -81,7 +81,7 @@ function get∂Γ∂α(α, β; A)
 end
 
 function get∂Γ∂β(α, β; A)
-    return I + sum([(abs(α_)*D_ - α_*A_) for (α_,D_,A_) in zip(α,A2D.(A),A)]);
+    return spdiagm(0=>ones(size(A[1],1))) + sum([(abs(α_)*D_ - α_*A_) for (α_,D_,A_) in zip(α,A2D.(A),A)]);
 end
 
 logdetΓ(α::TrackedVector, β::TrackedReal; A, P, t, k) = track(logdetΓ, α, β; A=A, P=P, t=t, k=k);

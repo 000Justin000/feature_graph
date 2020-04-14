@@ -15,8 +15,9 @@ include("kernels.jl");
 
 Random.seed!(0);
 
+# G = complete_graph(2);
 # G = watts_strogatz(10, 4, 0.3);
-G = complete_graph(2);
+G = watts_strogatz(3000, 6, 0.3);
 
 p1 = 0;
 p2, s, d = 1, [2], [2];
@@ -26,8 +27,8 @@ p = p1 + reduce(+, d; init=0);
 n = nv(G);
 A = getA(G, p);
 D = A2D.(A);
-N = 1024;
-n_batch = 32;
+N = 1;
+n_batch = 1;
 
 FIDX(fidx, V=vertices(G)) = [(i-1)*p+j for i in V for j in fidx];
 ll = vcat(0, cumsum(d));
@@ -103,7 +104,7 @@ function Qzμσ1(X, Y)
 
     ΓUL = getΓ(getα(), getβ(); A=A)[U,L];
     C2S = reshape(-ΓUL * reshape(Y, (p1*n, batch_size)), (sum(d), n, batch_size));
-    C2 = [Tracker.collect(C2S[ss_:ff_,:,:]) for (ss_,ff_) in zip(ss,ff)];
+    C2 = [C2S[ss_:ff_,:,:] for (ss_,ff_) in zip(ss,ff)];
 
     σZ1 = [(σZ0_.^-2.0 .+ getβ()).^-0.5 for σZ0_ in σZ0];
     μZ1 = [σZ1_.^2.0 .* (C1_ .+ C2_) for (σZ1_, C1_, C2_) in zip(σZ1, C1, C2)];
@@ -237,7 +238,7 @@ function Etrace(X, Y)
 
         σZS = cat(σZ..., dims=1);
         diagΓUU = β*ones(length(U)) + β*sum(abs(α_)*collect(diag(D_))[U] for (α_,D_) in zip(α,D));
-        trace = j -> dot(diagΓUU, vec(σZS[:,:,j]));
+        trace = j -> dot(diagΓUU, vec(σZS[:,:,j].^2.0));
     elseif length(pZ) == 3
         μZ, σZ, ηZ = pZ;
         ρZ = [rho(σZ_,ηZ_) for (σZ_,ηZ_) in zip(σZ,ηZ)];
@@ -292,11 +293,11 @@ function loss(X, Y)
     return -Ω;
 end
 
-dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:10000];
+dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:100];
 
 # print_params() = @printf("loss:  %10.3f,  α:  %s,  β:  %10.3f\n", loss(dat[end][1],dat[end][2]), array2str(getα()), getβ());
 ct = 0; print_params() = (global ct += 1; @printf("%5d,  loss:  %10.3f,  α:  %s,  β:  %10.3f,  μ:  %s,  logσ:  %s,  η:  %s\n", ct, loss(dat[end][1],dat[end][2]), array2str(getα()), getβ(), array2str(μ[1][:]), array2str(logσ[1][:]), array2str(η[1][:])));
-@time train!(loss, Flux.params(φ, μ..., logσ..., η...), dat, Descent(0.01); cb = print_params);
+train!(loss, Flux.params(φ, μ..., logσ..., η...), dat, Descent(0.01); cb = print_params);
 
 # function plot_SN!(h, μ, η, logσ; kwargs...)
 #     ϕ(x) = exp(-0.5*x^2.0) / sqrt(2π);
