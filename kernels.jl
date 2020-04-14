@@ -72,6 +72,10 @@ function mBCG(mmm_A::Function, B::Array{Float64,2}; PC::Function=Y->Y, k::Int=si
     return X, [SymTridiagonal(dv,ev) for (dv,ev) in T];
 end
 
+function getΓPP(α, β; A, D, P)
+    return β * I + β * sum([(abs(α_)*D_[P,P] - α_*A_[P,P]) for (α_,D_,A_) in zip(α,D,A)]);
+end
+
 function getΓ(α, β; A)
     return β * I + β * sum([(abs(α_)*D_ - α_*A_) for (α_,D_,A_) in zip(α,A2D.(A),A)]);
 end
@@ -196,6 +200,81 @@ quadformSC(α::TrackedVector, β::TrackedReal, rL; A, L) = track(quadformSC, α,
 end
 
 function test_quadformSC(n=100)
+    G = random_regular_graph(n, 3);
+    A = [adjacency_matrix(G)];
+
+    #------------------------
+    L = randperm(n)[1:div(n,2)];
+    U = setdiff(1:n, L);
+    rL = param(randn(div(n,2)));
+    getrL() = rL[:];
+    #------------------------
+
+    #------------------------
+    p = param(randn(2));
+    getα() = p[1:1];
+    getβ() = softplus(p[2]);
+    #------------------------
+
+    #------------------------
+    # true value
+    #------------------------
+    Γ = Tracker.collect(getΓ(getα(), getβ(); A=A));
+    SC = Γ[L,L] - Γ[L,U]*inv(Γ[U,U])*Γ[U,L];
+    Ω = getrL()' * SC * getrL();
+    #------------------------
+    Tracker.back!(Ω, 1);
+    @printf("accurate:       [%s],    [%s]\n", array2str(Tracker.grad(p)), array2str(Tracker.grad(rL)[1:10]));
+    reset_grad!(p, rL);
+    #------------------------
+
+    #------------------------
+    # approximation
+    #------------------------
+    Ω = quadformSC(getα(), getβ(), getrL(); A=A, L=L);
+    #------------------------
+    Tracker.back!(Ω, 1);
+    @printf("accurate:       [%s],    [%s]\n", array2str(Tracker.grad(p)), array2str(Tracker.grad(rL)[1:10]));
+    reset_grad!(p, rL);
+    #------------------------
+end
+
+traceΓB(α::TrackedVector, β::TrackedReal, B; A, P) = track(traceΓB, α, β, B; A=A, P=P);
+@grad function traceΓB(α, β, B; A, P)
+    """
+    Args:
+         α: model parameter vector
+         β: model parameter
+         B: diagonal blocks of a matrix
+         A: adjacency matrix vector
+         P: index set
+
+    Return:
+         tr(ΓPP * blockdiag(B[:,:,i] for i in 1:size(B,3)))
+    """
+    @assert (size(B,1) == size(B,2)) && (length(P) == size(B,2) * size(B,3));
+
+    α = data(α);
+    β = data(β);
+    B = data(B);
+
+    Γ = getΓ(α, β; A=A);
+    ∂Γ∂α = get∂Γ∂α(α, β; A=A);
+    ∂Γ∂β = get∂Γ∂β(α, β; A=A);
+
+    U = setdiff(1:size(A[1],1), L);
+
+    Ω = rL'*Γ[L,L]*rL - rL'*Γ[L,U]*cg(Γ[U,U],Γ[U,L]*rL);
+
+    quadform_partials(M) = rL'*M[L,L]*rL - rL'*M[L,U]*cg(Γ[U,U],Γ[U,L]*rL) + rL'*Γ[L,U]*cg(Γ[U,U],M[U,U]*cg(Γ[U,U],Γ[U,L]*rL)) - rL'*Γ[L,U]*cg(Γ[U,U],M[U,L]*rL);
+    ∂Ω∂α = map(quadform_partials, ∂Γ∂α);
+    ∂Ω∂β = quadform_partials(∂Γ∂β);
+    ∂Ω∂rL = 2*Γ[L,L]*rL - 2*Γ[L,U]*cg(Γ[U,U],Γ[U,L]*rL);
+
+    return Ω, Δ -> (Δ*∂Ω∂α, Δ*∂Ω∂β, Δ*∂Ω∂rL);
+end
+
+function test_traceΓB(n=100)
     G = random_regular_graph(n, 3);
     A = [adjacency_matrix(G)];
 

@@ -18,8 +18,8 @@ Random.seed!(0);
 # G = watts_strogatz(10, 4, 0.3);
 G = complete_graph(2);
 
-p1 = 2;
-p2, s, d = 0, [], [];
+p1 = 0;
+p2, s, d = 1, [2], [2];
 t, k, glm = 128, 32, 100;
 
 p = p1 + reduce(+, d; init=0);
@@ -39,10 +39,10 @@ V = collect(1:size(A[1],1));
 L = FIDX(1:p1);
 U = setdiff(V,L);
 
-# α0 = vcat(ones(p), -ones(div(p*(p-1),2)));
-# β0 = 1.0;
-α0 = vcat(randn(p), randn(div(p*(p-1),2)));
-β0 = exp(randn());
+α0 = vcat(ones(p), -ones(div(p*(p-1),2)));
+β0 = 1.0;
+# α0 = vcat(randn(p), randn(div(p*(p-1),2)));
+# β0 = exp(randn());
 CM0 = inv(Array(getΓ(α0, β0; A=A)));
 CM = (CM0 + CM0')/2.0;
 g = MvNormal(CM);
@@ -136,8 +136,8 @@ function sample_μση(μZ, σZ, ηZ)
 
         ρZ_ = rho(σZ_, ηZ_);
         ZS_ = Array{etype}(undef, size(μZ_)...);
-        for j in 1:n
-            for k in 1:batch_size
+        Threads.@threads for k in 1:batch_size
+            for j in 1:n
                 CM_ = diagm(0=>σZ_[:,j,k] .* σZ_[:,j,k]) - ρZ_[:,j,k] * ρZ_[:,j,k]';
                 ZS_[:,j,k] .= μZ_[:,j,k] .+ ρZ_[:,j,k] * abs(randn()) + chol(CM_) * randn(d_);
             end
@@ -227,26 +227,32 @@ end
 function Etrace(X, Y)
     batch_size = size(Y,3);
 
-    pZ = Qz(X, Y);
+    α = getα(); β = getβ();
 
-    Γ = getΓ(getα(), getβ(); A=A);
-    Gm(i,k) = (idx = FIDX(p1+ss[k]:p1+ff[k],[i]); Tracker.collect(Γ[idx,idx]));
+    pZ = Qz(X, Y);
 
     if length(pZ) == 2
         μZ, σZ = pZ;
         ρZ = nothing;
 
-        Var = (i,j,k) -> diagm(0=>σZ[k][:,i,j].^2.0);
+        σZS = cat(σZ..., dims=1);
+        diagΓUU = β*ones(length(U)) + β*sum(abs(α_)*collect(diag(D_))[U] for (α_,D_) in zip(α,D));
+        trace = j -> dot(diagΓUU, vec(σZS[:,:,j]));
     elseif length(pZ) == 3
         μZ, σZ, ηZ = pZ;
-        ρZ = [rho(σZ_, ηZ_) for (σZ_,ηZ_) in zip(σZ,ηZ)];
+        ρZ = [rho(σZ_,ηZ_) for (σZ_,ηZ_) in zip(σZ,ηZ)];
 
         Var = (i,j,k) -> diagm(0=>σZ[k][:,i,j] .* σZ[k][:,i,j]) - 2/π * ρZ[k][:,i,j] * ρZ[k][:,i,j]';
+
+        Γ(P) = β*diagm(ones(length(P))) + β*sum([(abs(α_)*D_[P,P]-α_*A_[P,P]) for (α_,D_,A_) in zip(α,D,A)]);
+        Gm(i,k) = Γ(FIDX(p1+ss[k]:p1+ff[k],[i]));
+
+        trace = j -> mapreduce(t->sum(Gm(t...) .* Var(t[1],j,t[2])), +, (i,k) for k in 1:p2 for i in 1:n; init=0.0);
     else
         error("unexpected length of pZ");
     end
 
-    return reduce(+, sum(Gm(i,k) .* Var(i,j,k)) for k in 1:p2 for j in 1:batch_size for i in 1:n; init=0.0) / batch_size;
+    return mean(trace(j) for j in 1:batch_size);
 end
 
 function EH(X, Y)
@@ -266,7 +272,7 @@ function EH(X, Y)
         error("unexpected length of pZ");
     end
 
-    return reduce(+, HH(i,j,k) for k in 1:p2 for j in 1:batch_size for i in 1:n; init=0.0) / batch_size;
+    return mapreduce(t->HH(t...), +, (i,j,k) for k in 1:p2 for j in 1:batch_size for i in 1:n; init=0.0) / batch_size;
 end
 
 function EQzlogPX(X, Y)
@@ -288,9 +294,9 @@ end
 
 dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:10000];
 
-print_params() = @printf("loss:  %10.3f,  α:  %s,  β:  %10.3f\n", loss(dat[end][1],dat[end][2]), array2str(getα()), getβ());
-# ct = 0; print_params() = (global ct += 1; @printf("%5d,  loss:  %10.3f,  α:  %s,  β:  %10.3f,  μ:  %s,  logσ:  %s,  η:  %s\n", ct, loss(dat[end][1],dat[end][2]), array2str(getα()), getβ(), array2str(μ[1][:]), array2str(logσ[1][:]), array2str(η[1][:])));
-train!(loss, Flux.params(φ, μ..., logσ..., η...), dat, Descent(0.01); cb = throttle(print_params, 10));
+# print_params() = @printf("loss:  %10.3f,  α:  %s,  β:  %10.3f\n", loss(dat[end][1],dat[end][2]), array2str(getα()), getβ());
+ct = 0; print_params() = (global ct += 1; @printf("%5d,  loss:  %10.3f,  α:  %s,  β:  %10.3f,  μ:  %s,  logσ:  %s,  η:  %s\n", ct, loss(dat[end][1],dat[end][2]), array2str(getα()), getβ(), array2str(μ[1][:]), array2str(logσ[1][:]), array2str(η[1][:])));
+@time train!(loss, Flux.params(φ, μ..., logσ..., η...), dat, Descent(0.01); cb = print_params);
 
 # function plot_SN!(h, μ, η, logσ; kwargs...)
 #     ϕ(x) = exp(-0.5*x^2.0) / sqrt(2π);
