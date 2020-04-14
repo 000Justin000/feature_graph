@@ -72,10 +72,6 @@ function mBCG(mmm_A::Function, B::Array{Float64,2}; PC::Function=Y->Y, k::Int=si
     return X, [SymTridiagonal(dv,ev) for (dv,ev) in T];
 end
 
-function getΓPP(α, β; A, D, P)
-    return β * I + β * sum([(abs(α_)*D_[P,P] - α_*A_[P,P]) for (α_,D_,A_) in zip(α,D,A)]);
-end
-
 function getΓ(α, β; A)
     return β * I + β * sum([(abs(α_)*D_ - α_*A_) for (α_,D_,A_) in zip(α,A2D.(A),A)]);
 end
