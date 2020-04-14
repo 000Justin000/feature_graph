@@ -72,16 +72,40 @@ function mBCG(mmm_A::Function, B::Array{Float64,2}; PC::Function=Y->Y, k::Int=si
     return X, [SymTridiagonal(dv,ev) for (dv,ev) in T];
 end
 
-function getΓ(α, β; A)
-    return β * spdiagm(0=>ones(size(A[1],1))) + β * sum([(abs(α_)*D_ - α_*A_) for (α_,D_,A_) in zip(α,A2D.(A),A)]);
+function parallel_mBCG(mmm_A::Function, B::Array{Float64,2}; PC::Function=Y->Y, k::Int=size(B,1), tol=1.0e-6)
+    t = size(B,2);
+    d = Threads.nthreads();
+    b = Int(ceil(t/d));
+
+    wl = [(i-1)*b+1:min(i*b,t) for i in 1:d];
+    Xs = Vector{Array{Float64,2}}(undef,d);
+    TTs = Vector{Vector{SymTridiagonal{Float64,Vector{Float64}}}}(undef,d);
+
+    Threads.@threads for i in 1:d
+        Xs[i], TTs[i] = mBCG(mmm_A, B[:,wl[i]]; PC=PC, k=k, tol=tol);
+    end
+
+    return hcat(Xs...), vcat(TTs...);
 end
 
-function get∂Γ∂α(α, β; A)
+sym_abs(x) = abs(x);
+sym_abs(x::TrackedReal) = track(sym_abs, x);
+@grad sym_abs(x) = (data(abs(x)), Δ->tuple(Δ*sign(x)));
+
+function getdiagΓ(α, β; A)
+    return β * (ones(size(A[1],1)) + sum(sym_abs(α_)*collect(diag(D_)) for (α_,D_) in zip(α,A2D.(A))));
+end
+
+function getΓ(α, β; A)
+    return β * (spdiagm(0=>ones(size(A[1],1))) + sum((sym_abs(α_)*D_ - α_*A_) for (α_,D_,A_) in zip(α,A2D.(A),A)));
+end
+
+function get∂Γ∂α(α::Vector{Float64}, β::Float64; A)
     return [β*sign(α_)*D_ - β*A_ for (α_,D_,A_) in zip(α,A2D.(A),A)];
 end
 
-function get∂Γ∂β(α, β; A)
-    return spdiagm(0=>ones(size(A[1],1))) + sum([(abs(α_)*D_ - α_*A_) for (α_,D_,A_) in zip(α,A2D.(A),A)]);
+function get∂Γ∂β(α::Vector{Float64}, β::Float64; A)
+    return spdiagm(0=>ones(size(A[1],1))) + sum((sym_abs(α_)*D_ - α_*A_) for (α_,D_,A_) in zip(α,A2D.(A),A));
 end
 
 logdetΓ(α::TrackedVector, β::TrackedReal; A, P, t, k) = track(logdetΓ, α, β; A=A, P=P, t=t, k=k);
@@ -111,7 +135,7 @@ logdetΓ(α::TrackedVector, β::TrackedReal; A, P, t, k) = track(logdetΓ, α, �
     ∂Γ∂α = get∂Γ∂α(α, β; A=A);
     ∂Γ∂β = get∂Γ∂β(α, β; A=A);
 
-    X, TT = mBCG(Y->Γ[P,P]*Y, Z; k=k);
+    X, TT = parallel_mBCG(Y->Γ[P,P]*Y, Z; k=k);
 
     vv = 0;
     for T in TT

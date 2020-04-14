@@ -20,7 +20,7 @@ Random.seed!(0);
 G = watts_strogatz(3000, 6, 0.3);
 
 p1 = 0;
-p2, s, d = 1, [2], [2];
+p2, s, d = 2, [2,3], [2,3];
 t, k, glm = 128, 32, 100;
 
 p = p1 + reduce(+, d; init=0);
@@ -40,10 +40,10 @@ V = collect(1:size(A[1],1));
 L = FIDX(1:p1);
 U = setdiff(V,L);
 
-α0 = vcat(ones(p), -ones(div(p*(p-1),2)));
+α0 = vcat(ones(p)*5.0, rand(div(p*(p-1),2))*5.0);
 β0 = 1.0;
 # α0 = vcat(randn(p), randn(div(p*(p-1),2)));
-# β0 = exp(randn());
+# β0 = softplus(randn());
 CM0 = inv(Array(getΓ(α0, β0; A=A)));
 CM = (CM0 + CM0')/2.0;
 g = MvNormal(CM);
@@ -80,7 +80,7 @@ X = [begin
      end for logPX_ in logPX(Z)];
 
 getα() = φ[1:end-1];
-getβ() = exp(φ[end]);
+getβ() = softplus(φ[end]);
 
 # TO BE VERIFIED
 # rho(σZ_, ηZ_) = (σZ_ .* σZ_ .* ηZ_) ./ sqrt.(1 .+ sum((σZ_ .* ηZ_) .* (σZ_ .* ηZ_), dims=1));
@@ -236,7 +236,7 @@ function Etrace(X, Y)
         μZ, σZ = pZ;
 
         σZS = cat(σZ..., dims=1);
-        diagΓUU = diag(Γ[U,U]);
+        diagΓUU = getdiagΓ(getα(), getβ(); A=A)[U];
         trace = j -> dot(diagΓUU, vec(σZS[:,:,j].^2.0));
     elseif length(pZ) == 3
         μZ, σZ, ηZ = pZ;
@@ -285,16 +285,16 @@ function loss(X, Y)
     Ω -= 0.5 * Equadform(X,Y);
     Ω -= 0.5 * Etrace(X,Y);
     Ω += EH(X,Y);
-    Ω += EQzlogPX(X, Y);
+    Ω += EQzlogPX(X,Y);
 
     return -Ω/n;
 end
 
-dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:100];
+dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:1000];
 
 # print_params() = @printf("loss:  %10.3f,  α:  %s,  β:  %10.3f\n", loss(dat[end][1],dat[end][2]), array2str(getα()), getβ());
 ct = 0; print_params() = (global ct += 1; @printf("%5d,  loss:  %10.3f,  α:  %s,  β:  %10.3f,  μ:  %s,  logσ:  %s,  η:  %s\n", ct, loss(dat[end][1],dat[end][2]), array2str(getα()), getβ(), array2str(μ[1][:]), array2str(logσ[1][:]), array2str(η[1][:])));
-train!(loss, Flux.params(φ, μ..., logσ..., η...), dat, Descent(0.01); cb = print_params);
+train!(loss, Flux.params(φ, μ..., logσ..., η...), dat, Descent(0.1); cb = print_params);
 
 # function plot_SN!(h, μ, η, logσ; kwargs...)
 #     ϕ(x) = exp(-0.5*x^2.0) / sqrt(2π);
