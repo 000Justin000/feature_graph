@@ -228,25 +228,22 @@ end
 function Etrace(X, Y)
     batch_size = size(Y,3);
 
-    α = getα(); β = getβ();
-
     pZ = Qz(X, Y);
+
+    Γ = getΓ(getα(), getβ(); A=A);
 
     if length(pZ) == 2
         μZ, σZ = pZ;
-        ρZ = nothing;
 
         σZS = cat(σZ..., dims=1);
-        diagΓUU = β*ones(length(U)) + β*sum(abs(α_)*collect(diag(D_))[U] for (α_,D_) in zip(α,D));
+        diagΓUU = diag(Γ[U,U]);
         trace = j -> dot(diagΓUU, vec(σZS[:,:,j].^2.0));
     elseif length(pZ) == 3
         μZ, σZ, ηZ = pZ;
         ρZ = [rho(σZ_,ηZ_) for (σZ_,ηZ_) in zip(σZ,ηZ)];
 
         Var = (i,j,k) -> diagm(0=>σZ[k][:,i,j] .* σZ[k][:,i,j]) - 2/π * ρZ[k][:,i,j] * ρZ[k][:,i,j]';
-
-        Γ(P) = β*diagm(ones(length(P))) + β*sum([(abs(α_)*D_[P,P]-α_*A_[P,P]) for (α_,D_,A_) in zip(α,D,A)]);
-        Gm(i,k) = Γ(FIDX(p1+ss[k]:p1+ff[k],[i]));
+        Gm(i,k) = (idx = FIDX(p1+ss[k]:p1+ff[k],[i]); Γ[idx,idx]);
 
         trace = j -> mapreduce(t->sum(Gm(t...) .* Var(t[1],j,t[2])), +, (i,k) for k in 1:p2 for i in 1:n; init=0.0);
     else
@@ -290,7 +287,7 @@ function loss(X, Y)
     Ω += EH(X,Y);
     Ω += EQzlogPX(X, Y);
 
-    return -Ω;
+    return -Ω/n;
 end
 
 dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:100];
