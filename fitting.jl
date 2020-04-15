@@ -16,19 +16,19 @@ include("kernels.jl");
 Random.seed!(0);
 
 # G = complete_graph(2);
-# G = watts_strogatz(10, 4, 0.3);
-G = watts_strogatz(3000, 6, 0.3);
+G = watts_strogatz(10, 4, 0.3);
+# G = watts_strogatz(3000, 6, 0.3);
 
 p1 = 0;
-p2, s, d = 2, [2,3], [2,3];
+p2, s, d = 1, [2], [2];
 t, k, glm = 128, 32, 100;
 
 p = p1 + reduce(+, d; init=0);
 n = nv(G);
 A = getA(G, p);
 D = A2D.(A);
-N = 1;
-n_batch = 1;
+N = 1024;
+n_batch = 32;
 
 FIDX(fidx, V=vertices(G)) = [(i-1)*p+j for i in V for j in fidx];
 ll = vcat(0, cumsum(d));
@@ -40,10 +40,10 @@ V = collect(1:size(A[1],1));
 L = FIDX(1:p1);
 U = setdiff(V,L);
 
-α0 = vcat(ones(p)*5.0, rand(div(p*(p-1),2))*5.0);
+α0 = vcat(ones(p), -ones(div(p*(p-1),2)));
 β0 = 1.0;
 # α0 = vcat(randn(p), randn(div(p*(p-1),2)));
-# β0 = softplus(randn());
+# β0 = exp(randn());
 CM0 = inv(Array(getΓ(α0, β0; A=A)));
 CM = (CM0 + CM0')/2.0;
 g = MvNormal(CM);
@@ -80,7 +80,7 @@ X = [begin
      end for logPX_ in logPX(Z)];
 
 getα() = φ[1:end-1];
-getβ() = softplus(φ[end]);
+getβ() = exp(φ[end]);
 
 # TO BE VERIFIED
 # rho(σZ_, ηZ_) = (σZ_ .* σZ_ .* ηZ_) ./ sqrt.(1 .+ sum((σZ_ .* ηZ_) .* (σZ_ .* ηZ_), dims=1));
@@ -179,7 +179,7 @@ function H_SN(μ, σ, η)
         entropy of the skewed Gaussian
     """
     @assert length(μ) == length(σ) == length(η);
-        k = length(μ);
+    k = length(μ);
 
     ϕ(x) = exp(-0.5*x^2.0) / sqrt(2π);
     Φ(x) = 0.5 * (1.0 + erf(x/√2));
@@ -194,9 +194,9 @@ function H_SN(μ, σ, η)
     return H0 - (sum(glw .* fp.(glx) .* exp.(glx)) + sum(glw .* fm.(glx) .* exp.(glx)));
 end
 
-Qz, sample_Qz, H = Qzμσ0, sample_μσ, H_N;
+# Qz, sample_Qz, H = Qzμσ0, sample_μσ, H_N;
 # Qz, sample_Qz, H = Qzμσ1, sample_μσ, H_N;
-# Qz, sample_Qz, H = Qzμση0, sample_μση, H_SN;
+Qz, sample_Qz, H = Qzμση0, sample_μση, H_SN;
 
 function Equadform(X, Y)
     batch_size = size(Y,3);
@@ -290,11 +290,11 @@ function loss(X, Y)
     return -Ω/n;
 end
 
-dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:1000];
+dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:10000];
 
 # print_params() = @printf("loss:  %10.3f,  α:  %s,  β:  %10.3f\n", loss(dat[end][1],dat[end][2]), array2str(getα()), getβ());
 ct = 0; print_params() = (global ct += 1; @printf("%5d,  loss:  %10.3f,  α:  %s,  β:  %10.3f,  μ:  %s,  logσ:  %s,  η:  %s\n", ct, loss(dat[end][1],dat[end][2]), array2str(getα()), getβ(), array2str(μ[1][:]), array2str(logσ[1][:]), array2str(η[1][:])));
-train!(loss, Flux.params(φ, μ..., logσ..., η...), dat, Descent(0.1); cb = print_params);
+train!(loss, Flux.params(φ, μ..., logσ..., η...), dat, Descent(0.01); cb = print_params);
 
 # function plot_SN!(h, μ, η, logσ; kwargs...)
 #     ϕ(x) = exp(-0.5*x^2.0) / sqrt(2π);
