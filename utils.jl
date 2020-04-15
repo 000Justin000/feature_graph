@@ -36,7 +36,7 @@ function array2str(arr)
     return join(arr, ", ");
 end
 
-function getA(G, p; interaction_list=1:p)
+function getA(G, p; interaction_list=[(i,j) for i in 1:p for j in i+1:p])
     """
     Given a graph, generate the graphical model that has every vertex mapped to
     p vertices, with p of them representing features
@@ -57,10 +57,8 @@ function getA(G, p; interaction_list=1:p)
     end
 
     # connections among different features on same vertices
-    for i in 1:p
-        for j in interaction_list
-            (j > i) && push!(A, kron(spdiagm(0=>ones(n)), sparse([i,j], [j,i], [1.0,1.0], p, p)));
-        end
+    for (i,j) in interaction_list
+        (j>i) && push!(A, kron(spdiagm(0=>ones(n)), sparse([i,j], [j,i], [1.0,1.0], p, p)));
     end
 
     return A;

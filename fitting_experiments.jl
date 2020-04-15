@@ -26,7 +26,7 @@ t, k, glm = 128, 32, 100;
 
 p = p1 + reduce(+, d; init=0);
 n = nv(G);
-A = getA(G, p);
+A = getA(G, p; interaction_list=[(i,j) for i in 1:p1 for j in p1+1:p]);
 D = A2D.(A);
 N = 1;
 n_batch = 1;
@@ -293,9 +293,9 @@ end
 
 dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:1000];
 
-# print_params() = @printf("loss:  %10.3f,  α:  %s,  β:  %10.3f\n", loss(dat[end][1],dat[end][2]), array2str(getα()), getβ());
-ct = 0; print_params() = (global ct += 1; @printf("%5d,  loss:  %10.3f,  α:  %s,  β:  %10.3f,  μ:  %s,  logσ:  %s,  η:  %s\n", ct, loss(dat[end][1],dat[end][2]), array2str(getα()), getβ(), array2str(μ[1][:]), array2str(logσ[1][:]), array2str(η[1][:])));
-# train!(loss, Flux.params(φ, μ..., logσ..., η...), dat, Descent(0.01); cb = print_params);
+print_params() = @printf("α:  %s,  β:  %10.3f\n", array2str(getα()), getβ());
+# ct = 0; print_params() = (global ct += 1; @printf("%5d,  loss:  %10.3f,  α:  %s,  β:  %10.3f,  μ:  %s,  logσ:  %s,  η:  %s\n", ct, loss(dat[end][1],dat[end][2]), array2str(getα()), getβ(), array2str(μ[1][:]), array2str(logσ[1][:]), array2str(η[1][:])));
+train!(loss, Flux.params(φ, μ..., logσ..., η...), dat, Descent(0.1); cb = print_params);
 
 # function plot_SN!(h, μ, η, logσ; kwargs...)
 #     ϕ(x) = exp(-0.5*x^2.0) / sqrt(2π);
