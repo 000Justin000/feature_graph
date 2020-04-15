@@ -61,7 +61,7 @@ tsctc(A, B) = reshape(A * reshape(B, (size(B,1), :)), (size(A,1), size(B)[2:end]
 W0 = [diagm(0=>ones(s[j])*5.0) for j in 1:p2];
 b0 = [zeros(s[j]) for j in 1:p2];
 
-φ = param(zeros(div(p*(p+1),2)+1));
+φ = param(zeros(length(A)+1));
 W = [param(W_) for W_ in W0];
 b = [param(b_) for b_ in b0];
 
