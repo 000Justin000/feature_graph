@@ -16,10 +16,10 @@ include("kernels.jl");
 Random.seed!(0);
 
 # G = complete_graph(2);
-G = watts_strogatz(10, 4, 0.3);
-# G = watts_strogatz(3000, 6, 0.3);
+# G = watts_strogatz(10, 4, 0.3);
+G = watts_strogatz(3000, 6, 0.3);
 
-p1 = 0;
+p1 = 1;
 p2, s, d = 1, [2], [2];
 t, k, glm = 128, 32, 100;
 
@@ -27,8 +27,8 @@ p = p1 + reduce(+, d; init=0);
 n = nv(G);
 A = getA(G, p);
 D = A2D.(A);
-N = 1024;
-n_batch = 32;
+N = 1;
+n_batch = 1;
 
 FIDX(fidx, V=vertices(G)) = [(i-1)*p+j for i in V for j in fidx];
 ll = vcat(0, cumsum(d));
@@ -102,8 +102,7 @@ function Qzμσ1(X, Y)
 
     C1 = [σZ0_.^-2.0 .* μZ0_ for (μZ0_,σZ0_) in zip(μZ0,σZ0)];
 
-    ΓUL = getΓ(getα(), getβ(); A=A)[U,L];
-    C2S = reshape(-ΓUL * reshape(Y, (p1*n, batch_size)), (sum(d), n, batch_size));
+    C2S = reshape(-ΓX(getα(), getβ(), reshape(Y, (p1*n, batch_size)); A=A, U=U, L=L), (sum(d), n, batch_size));
     C2 = [C2S[ss_:ff_,:,:] for (ss_,ff_) in zip(ss,ff)];
 
     σZ1 = [(σZ0_.^-2.0 .+ getβ()).^-0.5 for σZ0_ in σZ0];
@@ -195,8 +194,8 @@ function H_SN(μ, σ, η)
 end
 
 # Qz, sample_Qz, H = Qzμσ0, sample_μσ, H_N;
-# Qz, sample_Qz, H = Qzμσ1, sample_μσ, H_N;
-Qz, sample_Qz, H = Qzμση0, sample_μση, H_SN;
+Qz, sample_Qz, H = Qzμσ1, sample_μσ, H_N;
+# Qz, sample_Qz, H = Qzμση0, sample_μση, H_SN;
 
 function Equadform(X, Y)
     batch_size = size(Y,3);
@@ -294,7 +293,7 @@ dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1
 
 # print_params() = @printf("loss:  %10.3f,  α:  %s,  β:  %10.3f\n", loss(dat[end][1],dat[end][2]), array2str(getα()), getβ());
 ct = 0; print_params() = (global ct += 1; @printf("%5d,  loss:  %10.3f,  α:  %s,  β:  %10.3f,  μ:  %s,  logσ:  %s,  η:  %s\n", ct, loss(dat[end][1],dat[end][2]), array2str(getα()), getβ(), array2str(μ[1][:]), array2str(logσ[1][:]), array2str(η[1][:])));
-train!(loss, Flux.params(φ, μ..., logσ..., η...), dat, Descent(0.01); cb = print_params);
+# train!(loss, Flux.params(φ, μ..., logσ..., η...), dat, Descent(0.01); cb = print_params);
 
 # function plot_SN!(h, μ, η, logσ; kwargs...)
 #     ϕ(x) = exp(-0.5*x^2.0) / sqrt(2π);

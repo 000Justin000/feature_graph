@@ -259,50 +259,49 @@ function test_quadformSC(n=100)
     #------------------------
 end
 
-traceΓB(α::TrackedVector, β::TrackedReal, B; A, P) = track(traceΓB, α, β, B; A=A, P=P);
-@grad function traceΓB(α, β, B; A, P)
+ΓX(α::TrackedVector, β::TrackedReal, X; A, U, L) = track(ΓX, α, β, X; A=A, U=U, L=L);
+@grad function ΓX(α, β, X; A, U, L)
     """
     Args:
          α: model parameter vector
          β: model parameter
-         B: diagonal blocks of a matrix
+         X: matrix
          A: adjacency matrix vector
-         P: index set
+         U: index set
+         L: index set
 
     Return:
-         tr(ΓPP * blockdiag(B[:,:,i] for i in 1:size(B,3)))
+         Y = ΓUL X
     """
-    @assert (size(B,1) == size(B,2)) && (length(P) == size(B,2) * size(B,3));
+    @assert (size(X,1) == length(L))
 
     α = data(α);
     β = data(β);
-    B = data(B);
+    X = data(X);
 
     Γ = getΓ(α, β; A=A);
     ∂Γ∂α = get∂Γ∂α(α, β; A=A);
     ∂Γ∂β = get∂Γ∂β(α, β; A=A);
 
-    U = setdiff(1:size(A[1],1), L);
+    function sensitivity(ΔY)
+        ΔΓUL = ΔY * X';
+        ΔX = Γ[U,L]' * ΔY;
 
-    Ω = rL'*Γ[L,L]*rL - rL'*Γ[L,U]*cg(Γ[U,U],Γ[U,L]*rL);
+        return ([sum(ΔΓUL .* ∂Γ∂α_[U,L]) for ∂Γ∂α_ in ∂Γ∂α], sum(ΔΓUL .* ∂Γ∂β[U,L]), ΔX);
+    end
 
-    quadform_partials(M) = rL'*M[L,L]*rL - rL'*M[L,U]*cg(Γ[U,U],Γ[U,L]*rL) + rL'*Γ[L,U]*cg(Γ[U,U],M[U,U]*cg(Γ[U,U],Γ[U,L]*rL)) - rL'*Γ[L,U]*cg(Γ[U,U],M[U,L]*rL);
-    ∂Ω∂α = map(quadform_partials, ∂Γ∂α);
-    ∂Ω∂β = quadform_partials(∂Γ∂β);
-    ∂Ω∂rL = 2*Γ[L,L]*rL - 2*Γ[L,U]*cg(Γ[U,U],Γ[U,L]*rL);
-
-    return Ω, Δ -> (Δ*∂Ω∂α, Δ*∂Ω∂β, Δ*∂Ω∂rL);
+    return Γ[U,L]*X, sensitivity;
 end
 
-function test_traceΓB(n=100)
+function test_ΓB(n=100, m=20)
     G = random_regular_graph(n, 3);
     A = [adjacency_matrix(G)];
 
     #------------------------
     L = randperm(n)[1:div(n,2)];
     U = setdiff(1:n, L);
-    rL = param(randn(div(n,2)));
-    getrL() = rL[:];
+    X = param(randn(length(L), m));
+    C = randn(length(U), m);
     #------------------------
 
     #------------------------
@@ -314,24 +313,27 @@ function test_traceΓB(n=100)
     #------------------------
     # true value
     #------------------------
-    Γ = Tracker.collect(getΓ(getα(), getβ(); A=A));
-    SC = Γ[L,L] - Γ[L,U]*inv(Γ[U,U])*Γ[U,L];
-    Ω = getrL()' * SC * getrL();
+    Γ = getΓ(getα(), getβ(); A=A);
+    Ω = sum((Γ[U,L]*X) .* C);
     #------------------------
     Tracker.back!(Ω, 1);
-    @printf("accurate:       [%s],    [%s]\n", array2str(Tracker.grad(p)), array2str(Tracker.grad(rL)[1:10]));
-    reset_grad!(p, rL);
+    ΔX0 = Tracker.grad(X);
+    @printf("accurate:       [%s],    [%s]\n", array2str(Tracker.grad(p)), array2str(Tracker.grad(X)[:][1:10]));
+    reset_grad!(p, X);
     #------------------------
 
     #------------------------
     # approximation
     #------------------------
-    Ω = quadformSC(getα(), getβ(), getrL(); A=A, L=L);
+    Ω = sum(ΓX(getα(), getβ(), X; A=A, L=L, U=U) .* C);
     #------------------------
     Tracker.back!(Ω, 1);
-    @printf("accurate:       [%s],    [%s]\n", array2str(Tracker.grad(p)), array2str(Tracker.grad(rL)[1:10]));
-    reset_grad!(p, rL);
+    ΔX1 = Tracker.grad(X);
+    @printf("accurate:       [%s],    [%s]\n", array2str(Tracker.grad(p)), array2str(Tracker.grad(X)[:][1:10]));
+    reset_grad!(p, X);
     #------------------------
+
+    @assert all(ΔX0 .== ΔX1);
 end
 
 chol(A::TrackedArray) = track(chol, A);
