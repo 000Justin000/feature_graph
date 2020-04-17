@@ -9,6 +9,7 @@ using Distributions;
 using FastGaussQuadrature;
 using SpecialFunctions;
 using Random;
+using GraphSAGE;
 
 include("read_network.jl");
 include("utils.jl");
