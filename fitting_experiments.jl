@@ -1,5 +1,5 @@
 using Flux;
-using Flux: train!, throttle, Tracker, stack;
+using Flux: train!, throttle, Tracker;
 using LinearAlgebra;
 using SparseArrays;
 using LightGraphs;
@@ -125,7 +125,7 @@ function Qzμσ2(X, Y)
     batch_size = size(Y,3);
 
     YX = cat(Y, X...; dims=1);
-    μlogσZ = stack([reg(hcat(enc(G, collect(1:n), u->YX[:,u,i])...)) for i in 1:batch_size], 3);
+    μlogσZ = Flux.stack([reg(hcat(enc(G, collect(1:n), u->YX[:,u,i])...)) for i in 1:batch_size], 3);
 
     μZ, σZ = μlogσZ[1:sum(d),:,:], exp.(μlogσZ[sum(d)+1:end,:,:]);
     μZ2 = [μZ[ss_:ff_,:,:] for (ss_,ff_) in zip(ss,ff)];
