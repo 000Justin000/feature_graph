@@ -62,7 +62,7 @@ W0 = [[-5.0, 5.0] for j in 1:p2];
 b0 = [zeros(s[j]) for j in 1:p2];
 
 # parameter for the latent Gaussian (to be learned)
-φ = param(zeros(div(p*(p+1),2)+1));
+φ = param(zeros(length(A)+1));
 
 # parameter for the decoder (fixed)
 W = [param(W_) for W_ in W0];

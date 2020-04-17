@@ -1,5 +1,5 @@
 using Flux;
-using Flux: train!, throttle, Tracker;
+using Flux: train!, throttle, Tracker, stack;
 using LinearAlgebra;
 using SparseArrays;
 using LightGraphs;
@@ -21,10 +21,10 @@ G, A, feats, labels = read_network("Cora_true_8");
 # G = complete_graph(2);
 
 p1 = 8;
-p2, s, d = 1, [7], [7];
-t, k, glm = 128, 32, 100;
+p2, s, d = 1, Int[7], Int[7];
+t, k, glm, dim_h, dim_r = 128, 32, 100, 64, 64;
 
-p = p1 + reduce(+, d; init=0);
+p = p1 + sum(d);
 n = nv(G);
 A = getA(G, p; interaction_list=[(i,j) for i in 1:p1 for j in p1+1:p]);
 D = A2D.(A);
@@ -57,17 +57,24 @@ X = [reshape(hcat([convert(Array{Float64}, Flux.onehot(label, 1:7)) for label in
 
 tsctc(A, B) = reshape(A * reshape(B, (size(B,1), :)), (size(A,1), size(B)[2:end]...));
 
+# parameter used as decoder for synthetic data
 # W0 = [[-5.0, 5.0] for j in 1:p2];
 W0 = [diagm(0=>ones(s[j])*5.0) for j in 1:p2];
 b0 = [zeros(s[j]) for j in 1:p2];
 
+# parameter for the latent Gaussian (to be learned)
 φ = param(zeros(length(A)+1));
+
+# parameter for the decoder (fixed)
 W = [param(W_) for W_ in W0];
 b = [param(b_) for b_ in b0];
 
+# parameter for the encoder (to be learned)
 μ = [param(zeros(d[j], s[j])) for j in 1:p2];
 logσ = [param(zeros(d[j], s[j])) for j in 1:p2];
 η = [param(zeros(d[j], s[j])) for j in 1:p2];
+enc = graph_encoder(p1+sum(s), dim_r, dim_h, repeat(["SAGE_Mean"], 2); σ=relu);
+reg = Dense(dim_r, 2*sum(d));
 
 logPX(Z) = [logsoftmax(tsctc(W_,Z_) .+ repeat(b_,1,n,size(Z_,3)), dims=1) for (W_,Z_,b_) in zip(W,Z,b)];
 
@@ -111,6 +118,20 @@ function Qzμσ1(X, Y)
     μZ1 = [σZ1_.^2.0 .* (C1_ .+ C2_) for (σZ1_, C1_, C2_) in zip(σZ1, C1, C2)];
 
     return μZ1, σZ1;
+end
+
+# use GCN to learn μZ0 and σZ0
+function Qzμσ2(X, Y)
+    batch_size = size(Y,3);
+
+    YX = cat(Y, X...; dims=1);
+    μlogσZ = stack([reg(hcat(enc(G, collect(1:n), u->YX[:,u,i])...)) for i in 1:batch_size], 3);
+
+    μZ, σZ = μlogσZ[1:sum(d),:,:], exp.(μlogσZ[sum(d)+1:end,:,:]);
+    μZ2 = [μZ[ss_:ff_,:,:] for (ss_,ff_) in zip(ss,ff)];
+    σZ2 = [σZ[ss_:ff_,:,:] for (ss_,ff_) in zip(ss,ff)];
+
+    return μZ2, σZ2;
 end
 
 # sample normal distribution with diagonal covariance matrix
@@ -196,7 +217,8 @@ function H_SN(μ, σ, η)
 end
 
 # Qz, sample_Qz, H = Qzμσ0, sample_μσ, H_N;
-Qz, sample_Qz, H = Qzμσ1, sample_μσ, H_N;
+# Qz, sample_Qz, H = Qzμσ1, sample_μσ, H_N;
+Qz, sample_Qz, H = Qzμσ2, sample_μσ, H_N;
 # Qz, sample_Qz, H = Qzμση0, sample_μση, H_SN;
 
 function Equadform(X, Y)
@@ -295,7 +317,7 @@ dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1
 
 print_params() = @printf("α:  %s,  β:  %10.3f\n", array2str(getα()), getβ());
 # ct = 0; print_params() = (global ct += 1; @printf("%5d,  loss:  %10.3f,  α:  %s,  β:  %10.3f,  μ:  %s,  logσ:  %s,  η:  %s\n", ct, loss(dat[end][1],dat[end][2]), array2str(getα()), getβ(), array2str(μ[1][:]), array2str(logσ[1][:]), array2str(η[1][:])));
-train!(loss, Flux.params(φ, μ..., logσ..., η...), dat, Descent(0.1); cb = print_params);
+train!(loss, Flux.params(φ, μ..., logσ..., η..., enc, reg), dat, ADAM(0.01); cb = print_params);
 
 # function plot_SN!(h, μ, η, logσ; kwargs...)
 #     ϕ(x) = exp(-0.5*x^2.0) / sqrt(2π);
