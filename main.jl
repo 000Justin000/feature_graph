@@ -1,86 +1,436 @@
 using Flux;
-using Zygote;
+using Flux: train!, throttle, Tracker;
 using LinearAlgebra;
 using SparseArrays;
 using LightGraphs;
-using Plots; pyplot();
+using Plots;
 using LaTeXStrings;
+using Distributions;
+using FastGaussQuadrature;
+using SpecialFunctions;
+using Random;
+using GraphSAGE;
 
 include("utils.jl");
-include("read_network.jl");
+include("kernels.jl");
 
-p = 8;
-t = 512; k = 32;
-# G, A, labels, feats = read_network("county_election_2016");
-G = complete_graph(32);
-# G = watts_strogatz(3,2,0.5);
-n = nv(G);
-AA = getAA(G, p);
+# Random.seed!(0);
 
-# φ = zeros(p + div(p*(p-1),2) + p + 1);
-# getα() = tanh.(φ[1:end-1]);
-# getβ() = exp(φ[end]);
+tsctc(A, B) = reshape(A * reshape(B, (size(B,1), :)), (size(A,1), size(B)[2:end]...));
 
-φ = zeros(3);
-getα() = vcat(ones(p)*φ[1], ones(div(p*(p-1),2))*φ[2], ones(p)*φ[3]);
-getβ() = 1.0;
+function get_ssff(d)
+    ll = vcat(0, cumsum(d));
+    ss = [ll[i]+1 for i in 1:length(d)];
+    ff = [ll[i+1] for i in 1:length(d)];
 
-L0, U0 = rand_split(n, 0.5);
+    return ss, ff;
+end
 
-function getGamma(α, β=nothing; AA)
-    function Deg(A)
-        d = sum(A, dims=1)[:];
-        return spdiagm(0=>d);
-    end
-
-    DD = Deg.(AA);
-    Gm = I + sum(abs.(α) .* DD) - sum(α .* AA);
-
-    if !isnothing(β)
-        Gamma = β * Gm;
+# parameter used as decoder for synthetic data
+function init_W_(s, d; scale=5.0)
+    if (s == 2 && d == 1)
+        return reshape([-1.0, 1.0] * scale, (2,1));
+    elseif (s == d)
+        return diagm(0 => ones(s)) * scale;
     else
-        Gamma = Gm * exp(-logdet(Array(Gm))/size(Gm,1));
-    end
-
-    return Gamma;
-end
-
-function logdet_gt(L, U; msg="")
-    Gamma = getGamma(getα(); AA=AA);
-    result = logdet(Array(Gamma[setdiff(1:n*2*p,L),setdiff(1:n*2*p,L)])) -
-             logdet(Array(Gamma[setdiff(1:n*2*p,L,U),setdiff(1:n*2*p,L,U)]));
-    return result;
-end
-
-U = (U0.-1)*2*p .+ (p+1);
-
-α1 = range(-10.0, 10.0; length=30);
-α2 = range(-10.0, 10.0; length=30);
-
-V_LP  = zeros(length(α1), length(α2));
-V_GNN = zeros(length(α1), length(α2));
-
-for i in 1:length(α1)
-    for j in 1:length(α2)
-        global φ = [α1[i], α2[j], 1.0];
-        V0 = (-logdet_gt([],U));
-
-        # label propagation
-        L_LP = (L0.-1)*2*p .+ (p+1);
-        V_LP[i,j] = (-logdet_gt(L_LP,U)) - V0;
-
-        # GNN
-        L_GNN = vcat([(collect(1:n).-1)*2*p .+ (p+i) for i in 2:p]...);
-        V_GNN[i,j] = (-logdet_gt(L_GNN,U)) - V0;
+        error("unexpected (s,d) pair");
     end
 end
+init_b_(s) = zeros(s);
 
-function make_plot(α1, α2, V, fname="tmp", title="volume")
-    h = plot(framestyle=:box, xlabel=L"\alpha_{1}", ylabel=L"\alpha_{2}", title=title, size=(500,350));
-    contour!(h, α1, α2, V', fill=true, color=ColorGradient([:green,:white,:red]), clims=(-1.0,1.0).*maximum(abs.(V)));
-    savefig(h, "figs/"*fname*".png");
+function prepare_data(dataset; N=1, p1=1, p2=1, s=Int[2], d=Int[1])
+    if ((options = match(r"synthetic_([a-z]+)", dataset)) != nothing)
+        if options[1] == "tiny"
+            G = complete_graph(2);
+        elseif options[1] == "small"
+            G = watts_strogatz(10, 4, 0.3);
+        elseif options[1] == "medium"
+            G = watts_strogatz(500, 6, 0.3);
+        elseif options[1] == "large"
+            G = watts_strogatz(3000, 6, 0.3);
+        else
+            error("unexpected size option");
+        end
+
+        p = p1 + sum(d);
+        n = nv(G);
+        A = getA(G, p);
+        D = A2D.(A);
+
+        α0 = vcat(rand(p), randn(length(A)-p));
+        β0 = 1.0;
+#       β0 = exp(randn());
+        @printf("α0: %s,    β0: %10.3f\n", array2str(α0), β0);
+
+        cr = [p1+ss_:p1+ff_ for (ss_,ff_) in zip(get_ssff(d)...)];
+
+        CM0 = inv(Array(getΓ(α0, β0; A=A)));
+        CM = (CM0 + CM0')/2.0;
+        g = MvNormal(CM);
+        YZ = cat([reshape(rand(g), (p,n)) for _ in 1:N]..., dims=3);
+        Y = YZ[1:p1,:,:];
+        Z = [YZ[cr_,:,:] for cr_ in cr];
+
+        W0 = [param(init_W_(s[i], d[i])) for i in 1:p2];
+        b0 = [param(init_b_(s[i])) for i in 1:p2];
+
+        logPX(Z) = [logsoftmax(tsctc(W_,Z_) .+ repeat(b_,1,n,size(Z_,3)), dims=1) for (W_,b_,Z_) in zip(W0,b0,Z)];
+
+        X = [begin
+                x = zeros(size(logPX_));
+                for j in 1:size(logPX_,2)
+                    for k in 1:size(logPX_,3)
+                        x[sample(Weights(exp.(logPX_[:,j,k]))),j,k] = 1;
+                    end
+                end
+                x;
+             end for logPX_ in logPX(Z)];
+    else
+        error("unexpected dataset");
+    end
+
+    return G, A, Y, X, s, d;
 end
 
-make_plot(α1, α2, V_LP,       @sprintf("%02d_%02d_LP", n, p),  @sprintf("volume LP (n = %d, p = %d)", n, p));
-make_plot(α1, α2, V_GNN,      @sprintf("%02d_%02d_GNN", n, p), @sprintf("volume GNN (n = %d, p = %d)", n, p));
-make_plot(α1, α2, V_LP-V_GNN, @sprintf("%02d_%02d_GAP", n, p), @sprintf("volume LP - GNN (n = %d, p = %d)", n, p));
+dataset = "synthetic_tiny";
+encoder = ["MAP", "GNN", "HEU"][2];
+Qform = ["N", "SN"][2];
+t, k, glm, dim_h, dim_r = 128, 32, 100, 32, 8;
+N = 1024;
+n_batch = 32;
+
+# note G is the entity graph, A is the adjacency matrices for the graphical model
+G, A, Y, X, s, d = prepare_data(dataset; N=N, p1=0, p2=3, s=[2,2,2], d=[1,1,1]);
+
+n = nv(G);
+p1 = size(Y,1);
+p2 = length(X);
+p = p1 + sum(d);
+
+FIDX(fidx, V=vertices(G)) = [(i-1)*p+j for i in V for j in fidx];
+
+V = collect(1:size(A[1],1));
+L = FIDX(1:p1);
+U = setdiff(V,L);
+
+# parameter for the decoder (fixed)
+W = [param(init_W_(s[i], d[i])) for i in 1:p2];
+b = [param(init_b_(s[i])) for i in 1:p2];
+
+# parameter for the encoder (to be learned)
+μ = [param(zeros(d[j], s[j])) for j in 1:p2];
+logσ = [param(zeros(d[j], s[j])) for j in 1:p2];
+η = [param(zeros(d[j], s[j])) for j in 1:p2];
+enc = graph_encoder(p1+sum(s), dim_r, dim_h, repeat(["SAGE_Mean"], 2); σ=relu);
+reg = Dense(dim_r, sum(d) * Dict("N" => 2, "SN" => 3)[Qform]);
+
+logPX(Z) = [logsoftmax(tsctc(W_,Z_) .+ repeat(b_,1,n,size(Z_,3)), dims=1) for (W_,b_,Z_) in zip(W,b,Z)];
+
+# parameter for the latent Gaussian (to be learned)
+φ = param(zeros(length(A)+1));
+getα() = φ[1:end-1];
+# getβ() = exp(φ[end]);
+getβ() = param(1.0);
+
+# return normal distribution with diagonal covariance matrix, conditioned on X
+function Qzμσ0(X, Y)
+    μZ0 = [tsctc(μ_, X_) for (μ_, X_) in zip(μ, X)];
+    σZ0 = [exp.(tsctc(logσ_, X_)) for (logσ_, X_) in zip(logσ, X)];
+
+    return μZ0, σZ0;
+end
+
+# use GNN to learn μZ1 and σZ1
+function Qzμσ1(X, Y)
+    batch_size = size(Y,3);
+
+    YX = cat(Y, X...; dims=1);
+    μlogσZ = Flux.stack([reg(hcat(enc(G, collect(1:n), u->YX[:,u,i])...)) for i in 1:batch_size], 3);
+
+    μZ, σZ = μlogσZ[1:sum(d),:,:], exp.(μlogσZ[sum(d)+1:sum(d)*2,:,:]);
+    μZ1 = [μZ[ss_:ff_,:,:] for (ss_,ff_) in zip(get_ssff(d)...)];
+    σZ1 = [σZ[ss_:ff_,:,:] for (ss_,ff_) in zip(get_ssff(d)...)];
+
+    return μZ1, σZ1;
+end
+
+# return normal distribution with diagonal covariance matrix, conditioned on X & Y
+function Qzμσ2(X, Y)
+    batch_size = size(Y,3);
+
+    μZ0, σZ0 = Qzμσ0(X, Y);
+
+    C1 = [σZ0_.^-2.0 .* μZ0_ for (μZ0_,σZ0_) in zip(μZ0,σZ0)];
+
+    C2S = reshape(-ΓX(getα(), getβ(), reshape(Y, (p1*n, batch_size)); A=A, U=U, L=L), (sum(d), n, batch_size));
+    C2 = [C2S[ss_:ff_,:,:] for (ss_,ff_) in zip(get_ssff(d)...)];
+
+    σZ2 = [(σZ0_.^-2.0 .+ getβ()).^-0.5 for σZ0_ in σZ0];
+    μZ2 = [σZ2_.^2.0 .* (C1_ .+ C2_) for (σZ2_, C1_, C2_) in zip(σZ2, C1, C2)];
+
+    return μZ2, σZ2;
+end
+
+# sample normal distribution with diagonal covariance matrix
+function sample_μσ(μZ, σZ)
+    ZS = [μZ_ + σZ_ .* randn(size(σZ_)) for (μZ_, σZ_) in zip(μZ, σZ)];
+
+    return ZS;
+end
+
+# intermediate variable for skewed Gaussian computation
+rho(σZ_, ηZ_) = (σZ_ .* ηZ_) ./ sqrt.(1 .+ sum(ηZ_ .* ηZ_, dims=1));
+
+# return skewed normal distribution with diagonal covariance matrix, conditioned on X
+function Qzμση0(X, Y)
+    μZ0 = [tsctc(μ_, X_) for (μ_, X_) in zip(μ, X)];
+    σZ0 = [exp.(tsctc(logσ_, X_)) for (logσ_, X_) in zip(logσ, X)];
+    ηZ0 = [tsctc(η_, X_) for (η_, X_) in zip(η, X)];
+
+    return μZ0, σZ0, ηZ0;
+end
+
+# use GNN to learn μZ1, σZ1, and ηZ1
+function Qzμση1(X, Y)
+    batch_size = size(Y,3);
+
+    YX = cat(Y, X...; dims=1);
+    μlogσηZ = Flux.stack([reg(hcat(enc(G, collect(1:n), u->YX[:,u,i])...)) for i in 1:batch_size], 3);
+
+    μZ, σZ, ηZ = μlogσηZ[1:sum(d),:,:], exp.(μlogσηZ[sum(d)+1:sum(d)*2,:,:]), μlogσηZ[sum(d)*2+1:sum(d)*3,:,:];
+    μZ1 = [μZ[ss_:ff_,:,:] for (ss_,ff_) in zip(get_ssff(d)...)];
+    σZ1 = [σZ[ss_:ff_,:,:] for (ss_,ff_) in zip(get_ssff(d)...)];
+    ηZ1 = [ηZ[ss_:ff_,:,:] for (ss_,ff_) in zip(get_ssff(d)...)];
+
+    return μZ1, σZ1, ηZ1;
+end
+
+# sample skewed normal distribution with diagonal covariance matrix
+function sample_μση(μZ, σZ, ηZ)
+    ZS = [];
+    for (μZ_, σZ_, ηZ_) in zip(μZ, σZ, ηZ)
+        d_, batch_size, etype = size(μZ_,1), size(μZ_,3), eltype(μZ_);
+
+        ρZ_ = rho(σZ_, ηZ_);
+        ZS_ = Array{etype}(undef, size(μZ_)...);
+        Threads.@threads for k in 1:batch_size
+            for j in 1:n
+                CM_ = diagm(0=>σZ_[:,j,k] .* σZ_[:,j,k]) - ρZ_[:,j,k] * ρZ_[:,j,k]';
+                ZS_[:,j,k] .= μZ_[:,j,k] .+ ρZ_[:,j,k] * abs(randn(Float32)) + chol(CM_) * randn(Float32, d_);
+            end
+        end
+
+        push!(ZS, Tracker.collect(ZS_));
+    end
+
+    return ZS;
+end
+
+function H_N(μ, σ)
+    """
+    Args:
+        μ: center of the Gaussian
+        σ: spread parameter
+
+    Return:
+        entropy of the Gaussian
+    """
+    @assert length(μ) == length(σ);
+    k = length(μ);
+
+    H0 = 0.5 * k + 0.5 * k * log(2π) + sum(log.(σ));
+
+    return H0;
+end
+
+glx, glw = gausslaguerre(glm, reduced=true);
+function H_SN(μ, σ, η)
+    """
+    Args:
+        μ: center of skewed Gaussian
+        σ: spread parameter
+        η: skewness parameter
+
+    Return:
+        entropy of the skewed Gaussian
+    """
+    @assert length(μ) == length(σ) == length(η);
+    k = length(μ);
+
+    ϕ(x) = exp(-0.5*x^2.0) / sqrt(2π);
+    Φ(x) = 0.5 * (1.0 + erf(x/√2));
+
+    τ = norm(η);
+
+    fp(x) = (f = 2*ϕ(x)*Φ( τ*x); (f != 0.0) && (f *= log(2*Φ( τ*x))); f);
+    fm(x) = (f = 2*ϕ(x)*Φ(-τ*x); (f != 0.0) && (f *= log(2*Φ(-τ*x))); f);
+
+    H0 = 0.5 * k + 0.5 * k * log(2π) + sum(log.(σ));
+
+    return H0 - (sum(glw .* fp.(glx) .* exp.(glx)) + sum(glw .* fm.(glx) .* exp.(glx)));
+end
+
+if Qform == "N"
+    H, sample_Qz = H_N, sample_μσ;
+
+    if encoder == "MAP"
+        Qz = Qzμσ0;
+    elseif encoder == "GNN"
+        Qz = Qzμσ1
+    elseif encoder == "HEU"
+        Qz = Qzμσ2;
+    else
+        error("unsupported encoder")
+    end
+elseif Qform == "SN"
+    H, sample_Qz = H_SN, sample_μση;
+
+    if encoder == "MAP"
+        Qz = Qzμση0;
+    elseif encoder == "GNN"
+        Qz = Qzμση1
+    else
+        error("unsupported encoder")
+    end
+else
+    error("unsupported Qform")
+end
+
+function Equadform(X, Y)
+    batch_size = size(Y,3);
+
+    if length(X) == 0
+        YZS = Y;
+    else
+        pZ = Qz(X, Y);
+
+        if length(pZ) == 2
+            μZ, σZ = pZ;
+            EZS = cat(μZ..., dims=1);
+        elseif length(pZ) == 3
+            μZ, σZ, ηZ = pZ;
+            ρZ = [rho(σZ_, ηZ_) for (σZ_,ηZ_) in zip(σZ,ηZ)];
+            EZS = cat(μZ..., dims=1) + sqrt(2/π) * cat(ρZ..., dims=1);
+        else
+            error("unexpected length of pZ");
+        end
+
+        YZS = cat(Y,EZS, dims=1);
+    end
+
+    yzs = [vec(YZS[:,:,i]) for i in 1:batch_size];
+
+    return mean(quadformSC(getα(), getβ(), yzs_; A=A, L=V) for yzs_ in yzs);
+end
+
+function Etrace(X, Y)
+    batch_size = size(Y,3);
+
+    pZ = Qz(X, Y);
+
+    Γ = getΓ(getα(), getβ(); A=A);
+
+    if length(pZ) == 2
+        μZ, σZ = pZ;
+
+        σZS = cat(σZ..., dims=1);
+        diagΓUU = getdiagΓ(getα(), getβ(); A=A)[U];
+        trace = j -> dot(diagΓUU, vec(σZS[:,:,j].^2.0));
+    elseif length(pZ) == 3
+        μZ, σZ, ηZ = pZ;
+        ρZ = [rho(σZ_,ηZ_) for (σZ_,ηZ_) in zip(σZ,ηZ)];
+
+        Var = (i,j,k) -> diagm(0=>σZ[k][:,i,j] .* σZ[k][:,i,j]) - 2/π * ρZ[k][:,i,j] * ρZ[k][:,i,j]';
+        ss, ff = get_ssff(d);
+        Gm(i,k) = (idx = FIDX(p1+ss[k]:p1+ff[k],[i]); Γ[idx,idx]);
+
+        trace = j -> mapreduce(t->sum(Gm(t...) .* Var(t[1],j,t[2])), +, (i,k) for k in 1:p2 for i in 1:n; init=0.0);
+    else
+        error("unexpected length of pZ");
+    end
+
+    return mean(trace(j) for j in 1:batch_size);
+end
+
+function EH(X, Y)
+    batch_size = size(Y,3);
+
+    pZ = Qz(X, Y);
+
+    if length(pZ) == 2
+        μZ, σZ = pZ;
+
+        HH = (i,j,k) -> H(μZ[k][:,i,j], σZ[k][:,i,j]);
+    elseif length(pZ) == 3
+        μZ, σZ, ηZ = pZ;
+
+        HH = (i,j,k) -> H(μZ[k][:,i,j], σZ[k][:,i,j], ηZ[k][:,i,j]);
+    else
+        error("unexpected length of pZ");
+    end
+
+    return mapreduce(t->HH(t...), +, (i,j,k) for k in 1:p2 for j in 1:batch_size for i in 1:n; init=0.0) / batch_size;
+end
+
+function EQzlogPX(X, Y)
+    batch_size = size(Y,3);
+    ZS = sample_Qz(Qz(X,Y)...);
+
+    return reduce(+, sum(logPX_ .* X_) for (logPX_,X_) in zip(logPX(ZS),X); init=0.0) / batch_size;
+end
+
+function loss(X, Y)
+    Ω = 0.5 * logdetΓ(getα(), getβ(); A=A, P=V, t=t, k=k);
+    Ω -= 0.5 * Equadform(X,Y);
+    Ω -= 0.5 * Etrace(X,Y);
+    Ω += EH(X,Y);
+    Ω += EQzlogPX(X,Y);
+
+    return -Ω/n;
+end
+
+dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:1000];
+
+print_params() = @printf("α:  %s,    β:  %10.3f\n", array2str(getα()), getβ());
+# ct = 0; print_params() = (global ct += 1; @printf("%5d,  loss:  %10.3f,  α:  %s,  β:  %10.3f,  μ:  %s,  logσ:  %s,  η:  %s\n", ct, loss(dat[end][1],dat[end][2]), array2str(getα()), getβ(), array2str(μ[1][:]), array2str(logσ[1][:]), array2str(η[1][:])));
+# train!(loss, Flux.params(φ, μ..., logσ..., η..., enc, reg), dat, ADAM(0.01); cb = throttle(print_params,1));
+train!(loss, [Flux.params(φ, μ..., logσ..., η...), Flux.params(enc, reg)], dat, [ADAM(0.01), ADAM(0.01)]; cb = print_params, cb_skip=100);
+
+# function plot_SN!(h, μ, η, logσ; kwargs...)
+#     ϕ(x) = exp(-0.5*x^2.0) / sqrt(2π);
+#     Φ(x) = 0.5 * (1.0 + erf(x/√2));
+#     f(x) = 2 * ϕ((x-μ)/exp(logσ)) * Φ(η*(x-μ)/exp(logσ));
+#
+#     Plots.plot!(h, -3.0:0.01:3.0, data.(f.(-3.0:0.01:3.0)) * 500; kwargs...);
+# end
+#
+# h = Plots.plot(framestyle=:box);
+# XV = reshape(X[1], (2, 8192));
+# ZV = reshape(Z[1], (8192));
+# histogram!(h, ZV[XV[1,:] .== 1], label="-, data", color=1);
+# histogram!(h, ZV[XV[2,:] .== 1], label="+, data", color=2);
+# plot_SN!(h, μ[1][1], η[1][1], logσ[1][1]; linewidth=5.0, label="-, learned", color="black");
+# plot_SN!(h, μ[1][2], η[1][2], logσ[1][2]; linewidth=5.0, label="+, learned", color="grey");
+# display(h);
+
+
+#----------------------------------------------------
+# Analysis
+#----------------------------------------------------
+# α1 = CSV.read("output", delim=" ", ignorerepeated=true, header=0)[end,2:div(p*(p+1),2)+1] |> collect |> xx->[parse(Float64,x[1:end-1]) for x in xx];
+# β1 = CSV.read("output", delim=" ", ignorerepeated=true, header=0)[end,end];
+# FIDX(fidx, V=vertices(G)) = [(i-1)*p+j for i in V for j in fidx];
+# L, U = rand_split(nv(G), 0.6);
+#
+# function print_vol(lidx=[7], fidx=[1,2,3,4,5,6])
+#     obsl = FIDX(lidx, L); obsf = FIDX(fidx, vertices(G)); trgl = FIDX(lidx, U);
+#     vol_base() = (-logdetΓ(param(α1), param(β1); A=A, P=vcat(obsf,obsl,trgl), t=t, k=k)) - (-logdetΓ(param(α1), param(β1); A=A, P=vcat(obsf,obsl), t=t, k=k));
+#     vol_lp()  = (-logdetΓ(param(α1), param(β1); A=A, P=vcat(obsf,trgl), t=t, k=k)) - (-logdetΓ(param(α1), param(β1); A=A, P=obsf, t=t, k=k));
+#     vol_gnn() = (-logdetΓ(param(α1), param(β1); A=A, P=vcat(obsl,trgl), t=t, k=k)) - (-logdetΓ(param(α1), param(β1); A=A, P=obsl, t=t, k=k));
+#     vol_cgnn() = (-logdetΓ(param(α1), param(β1); A=A, P=trgl, t=t, k=k));
+#
+#     @printf("base:    %10.4f\n", mean([vol_base() for _ in 1:10]));
+#     @printf("lp:      %10.4f\n", mean([vol_lp() for _ in 1:10]));
+#     @printf("gnn:     %10.4f\n", mean([vol_gnn() for _ in 1:10]));
+#     @printf("cgnn:    %10.4f\n", mean([vol_cgnn() for _ in 1:10]));
+# end

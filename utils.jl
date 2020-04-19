@@ -1,7 +1,9 @@
+using Juno;
 using Random;
 using Printf;
 using MLBase: roc, f1score;
 using LightGraphs;
+import Flux: train!;
 
 function rand_split(n, ptr)
     """
@@ -69,5 +71,24 @@ A2D(A) = spdiagm(0=>sum(A,dims=1)[:]);
 function reset_grad!(xs...)
     for x in xs
         x.grad .= 0;
+    end
+end
+
+function train!(loss, θs::Vector, mini_batches::Vector, opts::Vector; cb=()->(), cb_skip=1)
+    """
+    extend training method to allow using different optimizers for different parameters
+    """
+
+    ps = Params(vcat(collect.(θs)...));
+    for (i,mini_batch) in enumerate(mini_batches)
+        gs = gradient(ps) do
+            loss(mini_batch...);
+        end
+
+        for (θ,opt) in zip(θs,opts)
+            update!(opt, θ, gs);
+        end
+
+        (i%cb_skip == 0) && cb();
     end
 end

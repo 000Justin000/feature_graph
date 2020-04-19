@@ -20,8 +20,8 @@ Random.seed!(0);
 G = watts_strogatz(10, 4, 0.3);
 # G = watts_strogatz(3000, 6, 0.3);
 
-p1 = 2;
-p2, s, d = 1, Int[2], Int[1];
+p1 = 0;
+p2, s, d = 2, Int[2,2], Int[1,1];
 t, k, glm, dim_h, dim_r = 128, 32, 100, 32, 8;
 
 p = p1 + sum(d);
@@ -41,9 +41,9 @@ V = collect(1:size(A[1],1));
 L = FIDX(1:p1);
 U = setdiff(V,L);
 
-α0 = vcat(ones(p), randn(length(A)-p));
+α0 = vcat(rand(p), randn(length(A)-p));
 β0 = 1.0;
-# α0 = vcat(randn(p), randn(div(p*(p-1),2)));
+# α0 = vcat(randn(p), randn(length(A)-p));
 # β0 = exp(randn());
 CM0 = inv(Array(getΓ(α0, β0; A=A)));
 CM = (CM0 + CM0')/2.0;
@@ -61,19 +61,9 @@ W0 = [[-5.0, 5.0] for j in 1:p2];
 # W0 = [diagm(0=>ones(s[j])*5.0) for j in 1:p2];
 b0 = [zeros(s[j]) for j in 1:p2];
 
-# parameter for the latent Gaussian (to be learned)
-φ = param(zeros(length(A)+1));
-
 # parameter for the decoder (fixed)
 W = [param(W_) for W_ in W0];
 b = [param(b_) for b_ in b0];
-
-# parameter for the encoder (to be learned)
-μ = [param(zeros(d[j], s[j])) for j in 1:p2];
-logσ = [param(zeros(d[j], s[j])) for j in 1:p2];
-η = [param(zeros(d[j], s[j])) for j in 1:p2];
-enc = graph_encoder(p1+sum(s), dim_r, dim_h, repeat(["SAGE_Mean"], 2); σ=relu);
-reg = Dense(dim_r, 2*sum(d));
 
 logPX(Z) = [logsoftmax(tsctc(W_,Z_) .+ repeat(b_,1,n,size(Z_,3)), dims=1) for (W_,Z_,b_) in zip(W,Z,b)];
 
@@ -87,9 +77,19 @@ X = [begin
         x;
      end for logPX_ in logPX(Z)];
 
+# parameter for the latent Gaussian (to be learned)
+φ = param(zeros(length(A)+1));
+
 getα() = φ[1:end-1];
-getβ() = exp(φ[end]);
-# getβ() = param(1.0);
+# getβ() = exp(φ[end]);
+getβ() = param(1.0);
+
+# parameter for the encoder (to be learned)
+μ = [param(zeros(d[j], s[j])) for j in 1:p2];
+logσ = [param(zeros(d[j], s[j])) for j in 1:p2];
+η = [param(zeros(d[j], s[j])) for j in 1:p2];
+enc = graph_encoder(p1+sum(s), dim_r, dim_h, repeat(["SAGE_Mean"], 2); σ=relu);
+reg = Dense(dim_r, 2*sum(d));
 
 # TO BE VERIFIED
 # rho(σZ_, ηZ_) = (σZ_ .* σZ_ .* ηZ_) ./ sqrt.(1 .+ sum((σZ_ .* ηZ_) .* (σZ_ .* ηZ_), dims=1));
@@ -120,7 +120,7 @@ function Qzμσ1(X, Y)
     return μZ1, σZ1;
 end
 
-# use GCN to learn μZ0 and σZ0
+# use GCN to learn μZ2 and σZ2
 function Qzμσ2(X, Y)
     batch_size = size(Y,3);
 
@@ -135,7 +135,6 @@ function Qzμσ2(X, Y)
 end
 
 # sample normal distribution with diagonal covariance matrix
-
 function sample_μσ(μZ, σZ)
     ZS = [μZ_ + σZ_ .* randn(size(σZ_)) for (μZ_, σZ_) in zip(μZ, σZ)];
 
@@ -149,6 +148,21 @@ function Qzμση0(X, Y)
     ηZ0 = [tsctc(η_, X_) for (η_, X_) in zip(η, X)];
 
     return μZ0, σZ0, ηZ0;
+end
+
+# use GCN to learn μZ1, σZ1, and ηZ1
+function Qzμση1(X, Y)
+    batch_size = size(Y,3);
+
+    YX = cat(Y, X...; dims=1);
+    μlogσηZ = Flux.stack([reg(hcat(enc(G, collect(1:n), u->YX[:,u,i])...)) for i in 1:batch_size], 3);
+
+    μZ, σZ, ηZ = μlogσηZ[1:sum(d),:,:], exp.(μlogσηZ[sum(d)+1:2*sum(d),:,:]), μlogσηZ[2*sum(d)+1:end,:,:];
+    μZ1 = [μZ[ss_:ff_,:,:] for (ss_,ff_) in zip(ss,ff)];
+    σZ1 = [σZ[ss_:ff_,:,:] for (ss_,ff_) in zip(ss,ff)];
+    ηZ1 = [ηZ[ss_:ff_,:,:] for (ss_,ff_) in zip(ss,ff)];
+
+    return μZ1, σZ1, ηZ1;
 end
 
 # sample skewed normal distribution with diagonal covariance matrix
@@ -218,8 +232,9 @@ end
 
 # Qz, sample_Qz, H = Qzμσ0, sample_μσ, H_N;
 # Qz, sample_Qz, H = Qzμσ1, sample_μσ, H_N;
-Qz, sample_Qz, H = Qzμσ2, sample_μσ, H_N;
-# Qz, sample_Qz, H = Qzμση0, sample_μση, H_SN;
+# Qz, sample_Qz, H = Qzμσ2, sample_μσ, H_N;
+Qz, sample_Qz, H = Qzμση0, sample_μση, H_SN;
+Qz, sample_Qz, H = Qzμση1, sample_μση, H_SN;
 
 function Equadform(X, Y)
     batch_size = size(Y,3);
@@ -315,9 +330,10 @@ end
 
 dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:1000];
 
-print_params() = @printf("α:  %s,  β:  %10.3f\n", array2str(getα()), getβ());
+print_params() = @printf("α:  %s,    β:  %10.3f\n", array2str(getα()), getβ());
 # ct = 0; print_params() = (global ct += 1; @printf("%5d,  loss:  %10.3f,  α:  %s,  β:  %10.3f,  μ:  %s,  logσ:  %s,  η:  %s\n", ct, loss(dat[end][1],dat[end][2]), array2str(getα()), getβ(), array2str(μ[1][:]), array2str(logσ[1][:]), array2str(η[1][:])));
-train!(loss, Flux.params(φ, μ..., logσ..., η..., enc, reg), dat, ADAM(0.01); cb = throttle(print_params,1));
+# train!(loss, Flux.params(φ, μ..., logσ..., η..., enc, reg), dat, ADAM(0.01); cb = throttle(print_params,1));
+train!(loss, [Flux.params(φ, μ..., logσ..., η...), Flux.params(enc, reg)], dat, [ADAM(0.01), ADAM(0.01)]; cb = print_params, cb_skip=100);
 
 # function plot_SN!(h, μ, η, logσ; kwargs...)
 #     ϕ(x) = exp(-0.5*x^2.0) / sqrt(2π);
