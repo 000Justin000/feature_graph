@@ -13,8 +13,9 @@ using GraphSAGE;
 
 include("utils.jl");
 include("kernels.jl");
+include("read_network.jl");
 
-# Random.seed!(0);
+Random.seed!(0);
 
 tsctc(A, B) = reshape(A * reshape(B, (size(B,1), :)), (size(A,1), size(B)[2:end]...));
 
@@ -59,7 +60,6 @@ function prepare_data(dataset; N=1, p1=1, p2=1, s=Int[2], d=Int[1])
 
         α0 = vcat(rand(p), randn(length(A)-p));
         β0 = 1.0;
-#       β0 = exp(randn());
         @printf("α0: %s,    β0: %10.3f\n", array2str(α0), β0);
 
         cr = [p1+ss_:p1+ff_ for (ss_,ff_) in zip(get_ssff(d)...)];
@@ -85,14 +85,19 @@ function prepare_data(dataset; N=1, p1=1, p2=1, s=Int[2], d=Int[1])
                 end
                 x;
              end for logPX_ in logPX(Z)];
-    else
-        error("unexpected dataset");
+    elseif match(r"county_election_([0-9]+)", dataset)
+        G, _, labels, feats = read_network("county_election_2016");
+        n = nv(G);
+
+        for i in vertices(G)
+            rem_edge!(G, i,i);
+        end
     end
 
     return G, A, Y, X, s, d;
 end
 
-dataset = "synthetic_tiny";
+dataset = "synthetic_small";
 encoder = ["MAP", "GNN", "HEU"][2];
 Qform = ["N", "SN"][2];
 t, k, glm, dim_h, dim_r = 128, 32, 100, 32, 8;
@@ -389,12 +394,12 @@ function loss(X, Y)
     return -Ω/n;
 end
 
-dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:1000];
+dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:5000];
 
 print_params() = @printf("α:  %s,    β:  %10.3f\n", array2str(getα()), getβ());
 # ct = 0; print_params() = (global ct += 1; @printf("%5d,  loss:  %10.3f,  α:  %s,  β:  %10.3f,  μ:  %s,  logσ:  %s,  η:  %s\n", ct, loss(dat[end][1],dat[end][2]), array2str(getα()), getβ(), array2str(μ[1][:]), array2str(logσ[1][:]), array2str(η[1][:])));
 # train!(loss, Flux.params(φ, μ..., logσ..., η..., enc, reg), dat, ADAM(0.01); cb = throttle(print_params,1));
-train!(loss, [Flux.params(φ, μ..., logσ..., η...), Flux.params(enc, reg)], dat, [ADAM(0.01), ADAM(0.01)]; cb = print_params, cb_skip=100);
+train!(loss, [Flux.params(φ, μ..., logσ..., η...), Flux.params(enc, reg)], dat, [Descent(0.01), ADAM(0.01)]; cb = print_params, cb_skip=10);
 
 # function plot_SN!(h, μ, η, logσ; kwargs...)
 #     ϕ(x) = exp(-0.5*x^2.0) / sqrt(2π);
