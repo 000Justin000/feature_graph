@@ -69,7 +69,7 @@ function prepare_data(dataset; N=1, p1=1, p2=1, s=[2], d=[1])
         A = getA(G, p);
         D = A2D.(A);
 
-        α0 = vcat(randn(p), randn(length(A)-p));
+        α0 = vcat(rand(p), randn(length(A)-p));
         β0 = 1.0;
         @printf("α0: %s,    β0: %10.3f\n", array2str(α0), β0);
 
