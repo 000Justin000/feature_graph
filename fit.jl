@@ -1,4 +1,5 @@
 using Flux;
+using Flux.Optimise;
 using Flux: train!, throttle, Tracker, unsqueeze;
 using LinearAlgebra;
 using SparseArrays;
@@ -18,7 +19,7 @@ include("common.jl");
 
 Random.seed!(parse(Int,ARGS[1]));
 
-dataset = "synthetic_medium";
+dataset = "synthetic_medium"
 encoder = ["MAP", "GNN", "HEU"][2];
 Qform = ["N", "SN"][1];
 t, k, glm, dim_h, dim_r = 128, 32, 100, 32, 8;
@@ -321,4 +322,4 @@ dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1
 print_params() = @printf("α:  %s,    β:  %10.3f\n", array2str(getα()), getβ());
 # ct = 0; print_params() = (global ct += 1; @printf("%5d,  loss:  %10.3f,  α:  %s,  β:  %10.3f,  μ:  %s,  logσ:  %s,  η:  %s\n", ct, loss(dat[end][1],dat[end][2]), array2str(getα()), getβ(), array2str(μ[1][:]), array2str(logσ[1][:]), array2str(η[1][:])));
 # train!(loss, Flux.params(φ, μ..., logσ..., η..., enc, reg), dat, ADAM(0.01); cb = throttle(print_params,1));
-train!(loss, [Flux.params(φ, μ..., logσ..., η...), Flux.params(enc, reg)], dat, [Descent(1.0e-2), ADAM(1.0e-2)]; start_opts = [Int(n_step*0.3), 0], cb = print_params, cb_skip=10);
+train!(loss, [Flux.params(φ, μ..., logσ..., η...), Flux.params(enc, reg)], dat, [Optimiser(WeightDecay(1.0e-3), Descent(1.0e-2)), ADAM(1.0e-2)]; start_opts = [Int(n_step*0.3), 0], cb = print_params, cb_skip=10);
