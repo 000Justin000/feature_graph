@@ -322,24 +322,3 @@ print_params() = @printf("α:  %s,    β:  %10.3f\n", array2str(getα()), getβ(
 # ct = 0; print_params() = (global ct += 1; @printf("%5d,  loss:  %10.3f,  α:  %s,  β:  %10.3f,  μ:  %s,  logσ:  %s,  η:  %s\n", ct, loss(dat[end][1],dat[end][2]), array2str(getα()), getβ(), array2str(μ[1][:]), array2str(logσ[1][:]), array2str(η[1][:])));
 # train!(loss, Flux.params(φ, μ..., logσ..., η..., enc, reg), dat, ADAM(0.01); cb = throttle(print_params,1));
 train!(loss, [Flux.params(φ, μ..., logσ..., η...), Flux.params(enc, reg)], dat, [Descent(1.0e-2), ADAM(1.0e-2)]; start_opts = [Int(n_step/5), 0], cb = print_params, cb_skip=10);
-
-#----------------------------------------------------
-# Analysis
-#----------------------------------------------------
-# α1 = CSV.read("output", delim=" ", ignorerepeated=true, header=0)[end,2:div(p*(p+1),2)+1] |> collect |> xx->[parse(Float64,x[1:end-1]) for x in xx];
-# β1 = CSV.read("output", delim=" ", ignorerepeated=true, header=0)[end,end];
-# FIDX(fidx, V=vertices(G)) = [(i-1)*p+j for i in V for j in fidx];
-# L, U = rand_split(nv(G), 0.6);
-#
-# function print_vol(lidx=[7], fidx=[1,2,3,4,5,6])
-#     obsl = FIDX(lidx, L); obsf = FIDX(fidx, vertices(G)); trgl = FIDX(lidx, U);
-#     vol_base() = (-logdetΓ(param(α1), param(β1); A=A, P=vcat(obsf,obsl,trgl), t=t, k=k)) - (-logdetΓ(param(α1), param(β1); A=A, P=vcat(obsf,obsl), t=t, k=k));
-#     vol_lp()  = (-logdetΓ(param(α1), param(β1); A=A, P=vcat(obsf,trgl), t=t, k=k)) - (-logdetΓ(param(α1), param(β1); A=A, P=obsf, t=t, k=k));
-#     vol_gnn() = (-logdetΓ(param(α1), param(β1); A=A, P=vcat(obsl,trgl), t=t, k=k)) - (-logdetΓ(param(α1), param(β1); A=A, P=obsl, t=t, k=k));
-#     vol_cgnn() = (-logdetΓ(param(α1), param(β1); A=A, P=trgl, t=t, k=k));
-#
-#     @printf("base:    %10.4f\n", mean([vol_base() for _ in 1:10]));
-#     @printf("lp:      %10.4f\n", mean([vol_lp() for _ in 1:10]));
-#     @printf("gnn:     %10.4f\n", mean([vol_gnn() for _ in 1:10]));
-#     @printf("cgnn:    %10.4f\n", mean([vol_cgnn() for _ in 1:10]));
-# end
