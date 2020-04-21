@@ -19,16 +19,16 @@ include("common.jl");
 
 Random.seed!(parse(Int,ARGS[1]));
 
-dataset = "synthetic_medium"
+dataset = "synthetic_small"
 encoder = ["MAP", "GNN", "HEU"][2];
 Qform = ["N", "SN"][1];
 t, k, glm, dim_h, dim_r = 128, 32, 100, 32, 8;
-N = 1;
-n_batch = 1;
+N = 1024;
+n_batch = 32;
 n_step = 5000;
 
 # note G is the entity graph, A is the adjacency matrices for the graphical model
-G, A, Y, X, s, d = prepare_data(dataset; N=N, p1=0, p2=3, s=[2,2,2], d=[1,1,1]);
+G, A, Y, X, s, d = prepare_data(dataset; N=N, p1=3, p2=0, s=Int[], d=Int[]);
 
 n = nv(G);
 p1 = size(Y,1);
@@ -263,7 +263,7 @@ function Etrace(X, Y)
 
         σZS = cat(σZ..., dims=1);
         diagΓUU = getdiagΓ(getα(), getβ(); A=A)[U];
-        trace = j -> dot(diagΓUU, vec(σZS[:,:,j].^2.0));
+        trace = j -> (length(U) == 0) ? 0 : dot(diagΓUU, vec(σZS[:,:,j].^2.0));
     elseif length(pZ) == 3
         μZ, σZ, ηZ = pZ;
         ρZ = [rho(σZ_,ηZ_) for (σZ_,ηZ_) in zip(σZ,ηZ)];
@@ -320,6 +320,5 @@ end
 dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:n_step];
 
 print_params() = @printf("α:  %s,    β:  %10.3f\n", array2str(getα()), getβ());
-# ct = 0; print_params() = (global ct += 1; @printf("%5d,  loss:  %10.3f,  α:  %s,  β:  %10.3f,  μ:  %s,  logσ:  %s,  η:  %s\n", ct, loss(dat[end][1],dat[end][2]), array2str(getα()), getβ(), array2str(μ[1][:]), array2str(logσ[1][:]), array2str(η[1][:])));
-# train!(loss, Flux.params(φ, μ..., logσ..., η..., enc, reg), dat, ADAM(0.01); cb = throttle(print_params,1));
-train!(loss, [Flux.params(φ, μ..., logσ..., η...), Flux.params(enc, reg)], dat, [Optimiser(WeightDecay(1.0e-3), Descent(1.0e-2)), ADAM(1.0e-2)]; start_opts = [Int(n_step*0.3), 0], cb = print_params, cb_skip=10);
+train!(loss, [Flux.params(φ, μ..., logσ..., η...), Flux.params(enc, reg)], dat, [Optimiser(WeightDecay(1.0e-3), Descent(1.0e-2)), ADAM(1.0e-2)]; start_opts = [0, 0], cb = print_params, cb_skip=10);
+# train!(loss, [Flux.params(φ, μ..., logσ..., η...), Flux.params(enc, reg)], dat, [Optimiser(WeightDecay(1.0e-3), Descent(1.0e-2)), ADAM(1.0e-2)]; start_opts = [Int(n_step*0.3), 0], cb = print_params, cb_skip=10);
