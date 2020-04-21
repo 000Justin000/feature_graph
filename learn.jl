@@ -16,8 +16,7 @@ include("kernels.jl");
 include("read_network.jl");
 include("common.jl");
 
-# Random.seed!(parse(Int,ARGS[1]));
-Random.seed!(0);
+Random.seed!(parse(Int,ARGS[1]));
 
 dataset = "synthetic_medium";
 encoder = ["MAP", "GNN", "HEU"][2];
