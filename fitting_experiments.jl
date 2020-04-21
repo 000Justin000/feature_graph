@@ -17,7 +17,7 @@ include("kernels.jl");
 
 Random.seed!(0);
 
-G, A, feats, labels = read_network("Cora_true_8");
+G, A, feats, labels = read_network("cora_true_8");
 # G = watts_strogatz(10, 4, 0.3);
 # G = complete_graph(2);
 

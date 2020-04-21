@@ -308,7 +308,7 @@ function read_cora(dim_reduction=false, dim_embed=8)
 
     y = map(x->cid2num[x], Array(cnt[:,end]));
 
-    ff = Matrix(cnt[:,2:end-1]) .* 2.0 .- 1.0;
+    ff = Matrix(cnt[:,2:end-1]);
     f = [ff[i,:] for i in 1:size(ff,1)];
 
     if dim_reduction
@@ -319,7 +319,7 @@ function read_cora(dim_reduction=false, dim_embed=8)
         f = [f_ - fbar for f_ in f];
     end
 
-    return g, [adjacency_matrix(g)], f, y;
+    return g, [adjacency_matrix(g)], y, f;
 end
 
 function read_network(network_name)
@@ -329,5 +329,5 @@ function read_network(network_name)
     (p = match(r"sexual_([0-9]+)$", network_name)) != nothing && return read_sexual(parse(Int, p[1]));
     (p = match(r"Anaheim", network_name)) != nothing       && return read_transportation_network(network_name, 8, 1:2, [3,4,5,8], 6, [1,2,4], 1:416);
     (p = match(r"ChicagoSketch", network_name)) != nothing && return read_transportation_network(network_name, 7, 1:2, [3,4,5,8], 1, [1,2,3], 388:933);
-    (p = match(r"Cora_([a-z]+)_([0-9]+)", network_name)) != nothing && return read_cora(parse(Bool, p[1]), parse(Int, p[2]));
+    (p = match(r"cora_([a-z]+)_([0-9]+)", network_name)) != nothing && return read_cora(parse(Bool, p[1]), parse(Int, p[2]));
 end

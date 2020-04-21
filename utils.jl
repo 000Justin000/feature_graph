@@ -1,9 +1,15 @@
 using Juno;
+using Statistics;
 using Random;
 using Printf;
 using MLBase: roc, f1score;
 using LightGraphs;
+using LinearAlgebra;
+using SparseArrays;
 import Flux: train!;
+
+eye(n) = diagm(0=>ones(n));
+speye(n) = spdiagm(0=>ones(n));
 
 function rand_split(n, ptr)
     """
@@ -38,35 +44,18 @@ function array2str(arr)
     return join(arr, ", ");
 end
 
-function getA(G, p; interaction_list=[(i,j) for i in 1:p for j in i+1:p])
+function R2(y, y_)
     """
-    Given a graph, generate the graphical model that has every vertex mapped to
-    p vertices, with p of them representing features
-
     Args:
-       G: LightGraph Object
-       p: number of features
+         y: true labels
+        y_: predicted labels
+
     Return:
-       A: an array of adjacency matrices for the graphical model
+        coefficients of determination
     """
-    n = nv(G); A0 = adjacency_matrix(G);
 
-    A = Vector{SparseMatrixCSC}();
-
-    # connections among corresponding features on different vertices
-    for i in 1:p
-        push!(A, kron(A0, sparse([i], [i], [1.0], p, p)));
-    end
-
-    # connections among different features on same vertices
-    for (i,j) in interaction_list
-        (j>i) && push!(A, kron(spdiagm(0=>ones(n)), sparse([i,j], [j,i], [1.0,1.0], p, p)));
-    end
-
-    return A;
+    return 1.0 - sum((y_ .- y).^2.0) / sum((y .- mean(y)).^2.0);
 end
-
-A2D(A) = spdiagm(0=>sum(A,dims=1)[:]);
 
 function reset_grad!(xs...)
     for x in xs
@@ -74,7 +63,7 @@ function reset_grad!(xs...)
     end
 end
 
-function train!(loss, θs::Vector, mini_batches::Vector, opts::Vector; cb=()->(), cb_skip=1)
+function train!(loss, θs::Vector, mini_batches::Vector, opts::Vector; start_opts=zeros(Int,length(opts)), cb=()->(), cb_skip=1)
     """
     extend training method to allow using different optimizers for different parameters
     """
@@ -85,10 +74,10 @@ function train!(loss, θs::Vector, mini_batches::Vector, opts::Vector; cb=()->()
             loss(mini_batch...);
         end
 
-        for (θ,opt) in zip(θs,opts)
-            update!(opt, θ, gs);
+        for (θ,opt,start_opt) in zip(θs,opts,start_opts)
+            (i > start_opt) && update!(opt, θ, gs);
         end
 
-        (i%cb_skip == 0) && cb();
+        (i % cb_skip == 0) && cb();
     end
 end

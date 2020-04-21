@@ -97,7 +97,7 @@ function getdiagΓ(α, β; A)
 end
 
 function getΓ(α, β; A)
-    return β * (spdiagm(0=>ones(size(A[1],1))) + sum((sym_abs(α_)*D_ - α_*A_) for (α_,D_,A_) in zip(α,A2D.(A),A)));
+    return β * (speye(size(A[1],1)) + sum((sym_abs(α_)*D_ - α_*A_) for (α_,D_,A_) in zip(α,A2D.(A),A)));
 end
 
 function get∂Γ∂α(α::Vector{Float64}, β::Float64; A)
@@ -105,7 +105,7 @@ function get∂Γ∂α(α::Vector{Float64}, β::Float64; A)
 end
 
 function get∂Γ∂β(α::Vector{Float64}, β::Float64; A)
-    return spdiagm(0=>ones(size(A[1],1))) + sum((sym_abs(α_)*D_ - α_*A_) for (α_,D_,A_) in zip(α,A2D.(A),A));
+    return speye(size(A[1],1)) + sum((sym_abs(α_)*D_ - α_*A_) for (α_,D_,A_) in zip(α,A2D.(A),A));
 end
 
 logdetΓ(α::TrackedVector, β::TrackedReal; A, P, t, k) = track(logdetΓ, α, β; A=A, P=P, t=t, k=k);

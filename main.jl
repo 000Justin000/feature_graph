@@ -1,5 +1,5 @@
 using Flux;
-using Flux: train!, throttle, Tracker;
+using Flux: train!, throttle, Tracker, unsqueeze;
 using LinearAlgebra;
 using SparseArrays;
 using LightGraphs;
@@ -14,95 +14,17 @@ using GraphSAGE;
 include("utils.jl");
 include("kernels.jl");
 include("read_network.jl");
+include("common.jl");
 
-Random.seed!(0);
+Random.seed!(parse(Int,ARGS[1]));
 
-tsctc(A, B) = reshape(A * reshape(B, (size(B,1), :)), (size(A,1), size(B)[2:end]...));
-
-function get_ssff(d)
-    ll = vcat(0, cumsum(d));
-    ss = [ll[i]+1 for i in 1:length(d)];
-    ff = [ll[i+1] for i in 1:length(d)];
-
-    return ss, ff;
-end
-
-# parameter used as decoder for synthetic data
-function init_W_(s, d; scale=5.0)
-    if (s == 2 && d == 1)
-        return reshape([-1.0, 1.0] * scale, (2,1));
-    elseif (s == d)
-        return diagm(0 => ones(s)) * scale;
-    else
-        error("unexpected (s,d) pair");
-    end
-end
-init_b_(s) = zeros(s);
-
-function prepare_data(dataset; N=1, p1=1, p2=1, s=Int[2], d=Int[1])
-    if ((options = match(r"synthetic_([a-z]+)", dataset)) != nothing)
-        if options[1] == "tiny"
-            G = complete_graph(2);
-        elseif options[1] == "small"
-            G = watts_strogatz(10, 4, 0.3);
-        elseif options[1] == "medium"
-            G = watts_strogatz(500, 6, 0.3);
-        elseif options[1] == "large"
-            G = watts_strogatz(3000, 6, 0.3);
-        else
-            error("unexpected size option");
-        end
-
-        p = p1 + sum(d);
-        n = nv(G);
-        A = getA(G, p);
-        D = A2D.(A);
-
-        α0 = vcat(rand(p), randn(length(A)-p));
-        β0 = 1.0;
-        @printf("α0: %s,    β0: %10.3f\n", array2str(α0), β0);
-
-        cr = [p1+ss_:p1+ff_ for (ss_,ff_) in zip(get_ssff(d)...)];
-
-        CM0 = inv(Array(getΓ(α0, β0; A=A)));
-        CM = (CM0 + CM0')/2.0;
-        g = MvNormal(CM);
-        YZ = cat([reshape(rand(g), (p,n)) for _ in 1:N]..., dims=3);
-        Y = YZ[1:p1,:,:];
-        Z = [YZ[cr_,:,:] for cr_ in cr];
-
-        W0 = [param(init_W_(s[i], d[i])) for i in 1:p2];
-        b0 = [param(init_b_(s[i])) for i in 1:p2];
-
-        logPX(Z) = [logsoftmax(tsctc(W_,Z_) .+ repeat(b_,1,n,size(Z_,3)), dims=1) for (W_,b_,Z_) in zip(W0,b0,Z)];
-
-        X = [begin
-                x = zeros(size(logPX_));
-                for j in 1:size(logPX_,2)
-                    for k in 1:size(logPX_,3)
-                        x[sample(Weights(exp.(logPX_[:,j,k]))),j,k] = 1;
-                    end
-                end
-                x;
-             end for logPX_ in logPX(Z)];
-    elseif match(r"county_election_([0-9]+)", dataset)
-        G, _, labels, feats = read_network("county_election_2016");
-        n = nv(G);
-
-        for i in vertices(G)
-            rem_edge!(G, i,i);
-        end
-    end
-
-    return G, A, Y, X, s, d;
-end
-
-dataset = "synthetic_small";
+dataset = "synthetic_medium";
 encoder = ["MAP", "GNN", "HEU"][2];
-Qform = ["N", "SN"][2];
+Qform = ["N", "SN"][1];
 t, k, glm, dim_h, dim_r = 128, 32, 100, 32, 8;
-N = 1024;
-n_batch = 32;
+N = 1;
+n_batch = 1;
+n_step = 10000;
 
 # note G is the entity graph, A is the adjacency matrices for the graphical model
 G, A, Y, X, s, d = prepare_data(dataset; N=N, p1=0, p2=3, s=[2,2,2], d=[1,1,1]);
@@ -394,30 +316,12 @@ function loss(X, Y)
     return -Ω/n;
 end
 
-dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:5000];
+dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:n_step];
 
 print_params() = @printf("α:  %s,    β:  %10.3f\n", array2str(getα()), getβ());
 # ct = 0; print_params() = (global ct += 1; @printf("%5d,  loss:  %10.3f,  α:  %s,  β:  %10.3f,  μ:  %s,  logσ:  %s,  η:  %s\n", ct, loss(dat[end][1],dat[end][2]), array2str(getα()), getβ(), array2str(μ[1][:]), array2str(logσ[1][:]), array2str(η[1][:])));
 # train!(loss, Flux.params(φ, μ..., logσ..., η..., enc, reg), dat, ADAM(0.01); cb = throttle(print_params,1));
-train!(loss, [Flux.params(φ, μ..., logσ..., η...), Flux.params(enc, reg)], dat, [Descent(0.01), ADAM(0.01)]; cb = print_params, cb_skip=10);
-
-# function plot_SN!(h, μ, η, logσ; kwargs...)
-#     ϕ(x) = exp(-0.5*x^2.0) / sqrt(2π);
-#     Φ(x) = 0.5 * (1.0 + erf(x/√2));
-#     f(x) = 2 * ϕ((x-μ)/exp(logσ)) * Φ(η*(x-μ)/exp(logσ));
-#
-#     Plots.plot!(h, -3.0:0.01:3.0, data.(f.(-3.0:0.01:3.0)) * 500; kwargs...);
-# end
-#
-# h = Plots.plot(framestyle=:box);
-# XV = reshape(X[1], (2, 8192));
-# ZV = reshape(Z[1], (8192));
-# histogram!(h, ZV[XV[1,:] .== 1], label="-, data", color=1);
-# histogram!(h, ZV[XV[2,:] .== 1], label="+, data", color=2);
-# plot_SN!(h, μ[1][1], η[1][1], logσ[1][1]; linewidth=5.0, label="-, learned", color="black");
-# plot_SN!(h, μ[1][2], η[1][2], logσ[1][2]; linewidth=5.0, label="+, learned", color="grey");
-# display(h);
-
+train!(loss, [Flux.params(φ, μ..., logσ..., η...), Flux.params(enc, reg)], dat, [Descent(1.0e-2), ADAM(1.0e-2)]; start_opts = [Int(n_step/5), 0], cb = print_params, cb_skip=10);
 
 #----------------------------------------------------
 # Analysis
