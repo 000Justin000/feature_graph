@@ -17,9 +17,10 @@ include("kernels.jl");
 include("read_network.jl");
 include("common.jl");
 
-Random.seed!(parse(Int,ARGS[1]));
+# Random.seed!(parse(Int,ARGS[1]));
+Random.seed!(0);
 
-dataset = "synthetic_medium"
+dataset = "cora_true_8"
 encoder = ["MAP", "GNN", "HEU"][2];
 Qform = ["N", "SN"][1];
 t, k, glm, dim_h, dim_r = 128, 32, 100, 32, 8;
@@ -320,4 +321,4 @@ end
 dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:n_step];
 
 print_params() = @printf("α:  %s,    β:  %10.3f\n", array2str(getα()), getβ());
-train!(loss, [Flux.params(φ, μ..., logσ..., η...), Flux.params(enc, reg)], dat, [Optimiser(WeightDecay(1.0e-3), Descent(1.0e-2)), ADAM(1.0e-2)]; start_opts = [Int(n_step*0.0), 0], cb = print_params, cb_skip=10);
+train!(loss, [Flux.params(φ, μ..., logσ..., η...), Flux.params(enc, reg)], dat, [Optimiser(WeightDecay(1.0e-3), Descent(1.0e-2)), ADAM(1.0e-2)]; start_opts = [Int(n_step*0.0), 0], cb = print_params, cb_skip=1);

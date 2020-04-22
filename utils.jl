@@ -57,6 +57,51 @@ function R2(y, y_)
     return 1.0 - sum((y_ .- y).^2.0) / sum((y .- mean(y)).^2.0);
 end
 
+function expansion(m, ids)
+    """
+    Args:
+         m: overall dimension
+       ids: a length m_ vector with indices indicating location
+
+    Returns:
+         Ψ: a m x m_ matrix that expand a vector of dimension m_ to a vector of dimension m
+    """
+
+    m_ = length(ids);
+
+    II = Vector{Int}();
+    JJ = Vector{Int}();
+    VV = Vector{Float64}();
+
+    for (i,id) in enumerate(ids)
+        push!(II, id);
+        push!(JJ, i);
+        push!(VV, 1.0);
+    end
+
+    return sparse(II, JJ, VV, m, m_);
+end
+
+function interpolate(L, xL; Γ)
+    """
+    Args:
+         L: indices of observation
+        xL: observation
+         Γ: label propagation matrix
+
+    Returns:
+         x: interpolated value over entire graph
+    """
+
+    n = size(Γ,1);
+    U = setdiff(1:n, L);
+    xU = cg(Γ[U,U], -Γ[U,L]*xL);
+
+    x = expansion(n,L) * xL + expansion(n,U) * xU;
+
+    return x;
+end
+
 function reset_grad!(xs...)
     for x in xs
         x.grad .= 0;
