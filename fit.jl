@@ -19,7 +19,7 @@ include("common.jl");
 
 Random.seed!(parse(Int,ARGS[1]));
 
-dataset = "cora_true_8"
+dataset = "cora_true_8";
 encoder = ["MAP", "GNN", "HEU"][2];
 Qform = ["N", "SN"][1];
 t, k, glm, dim_h, dim_r = 128, 32, 100, 32, 8;
