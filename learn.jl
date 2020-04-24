@@ -59,14 +59,14 @@ function pred(U, L; labelL, predict, Γ)
     return lU;
 end
 
-Random.seed!(parse(Int,ARGS[1]));
-# Random.seed!(0);
+# Random.seed!(parse(Int,ARGS[1]));
+Random.seed!(0);
 
-dataset = "cora_true_8";
-dim_h, dim_r = 32, 8;
-n_step = 3000;
-ptr = 0.60;
-model = ["uniform", "gnn"][2];
+dataset = "cora_false_0";
+dim_h, dim_r = 16, 8;
+n_step = 200;
+ptr = 0.01;
+model = ["uniform", "gnn"][1];
 correlation = ["zero", "homo"][2];
 
 if ((options = match(r"synthetic_([0-9]+)", dataset)) != nothing)
@@ -114,10 +114,10 @@ f1sc(U,L) = (probs = pred(U,L; labelL=labels[:,L], predict=base_prob, Γ=Γ); f_
 L, VU = rand_split(n, ptr);
 V, U = VU[1:div(length(VU),2)], VU[div(length(VU),2)+1:end];
 
-n_batch = Int(round(length(L) * 0.10));
+n_batch = Int(round(length(L) * 0.50));
 mini_batches = [tuple(sample(L, n_batch, replace=false)) for _ in 1:n_step];
 
 cb() = @printf("%6.3f,    %6.3f,    %6.3f,    %6.3f\n", loss(L), loss(V), acrc(V,L), f1sc(V,L));
-train!(loss, [Flux.params(enc, reg)], mini_batches, [ADAM(0.001)]; cb=cb, cb_skip=100);
+train!(loss, [Flux.params(enc, reg)], mini_batches, [ADAM(0.001)]; cb=cb, cb_skip=10);
 
 @printf("%6.3f\n", acrc(U,L));
