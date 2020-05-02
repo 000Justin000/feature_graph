@@ -16,7 +16,8 @@ include("kernels.jl");
 include("read_network.jl");
 include("common.jl");
 
-Random.seed!(parse(Int,ARGS[1]));
+Random.seed!(0);
+# Random.seed!(parse(Int,ARGS[1]));
 
 dataset = "synthetic_medium";
 encoder = ["MAP", "GNN", "HEU"][2];
@@ -27,7 +28,7 @@ n_batch = 1;
 n_step = 5000;
 
 # note G is the entity graph, A is the adjacency matrices for the graphical model
-G, A, Y, X, s, d = prepare_data(dataset; N=N, p1=0, p2=3, s=[2,2,2], d=[1,1,1]);
+G, A, Y, X, s, d = prepare_data(dataset; N=N, p1=0, p2=6, s=[], d=[]);
 
 n = nv(G);
 p1 = size(Y,1);

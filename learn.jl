@@ -17,47 +17,6 @@ include("kernels.jl");
 include("read_network.jl");
 include("common.jl");
 
-function interpolate(L, rL; Γ)
-    """
-    Args:
-         L: mini_batch indices for estimating noise
-        rL: noise over the mini_batch L
-         Γ: label propagation matrix
-
-    Returns:
-         r: noise over all vertices
-    """
-    n = size(Γ,1);
-    U = setdiff(1:n, L);
-    rU = hcat([cg(Γ[U,U], -Γ[U,L]*rL[:,i]) for i in 1:size(rL,2)]...);
-
-    r = expansion(n,L) * rL + expansion(n,U) * rU;
-
-    return r;
-end
-
-function pred(U, L; labelL, predict, Γ)
-    """
-    Args:
-          U: vertices to predict
-          L: vertices with ground truth labels
-     labelL: ground truth labels on L
-    predict: base predictor function
-          Γ: label propagation matrix
-
-    Returns:
-         lU: predictive label = base predictor output + estimated noise
-    """
-
-    pUL = predict(vcat(U, L));
-    pU = pUL[:,1:length(U)];
-    pL = pUL[:,length(U)+1:end];
-
-    rL = labelL - data(pL);
-    lU = pU + interpolate(L, rL'; Γ=Γ)[U,:]';
-
-    return lU;
-end
 
 # Random.seed!(parse(Int,ARGS[1]));
 Random.seed!(0);
@@ -71,7 +30,7 @@ correlation = ["zero", "homo"][2];
 
 if ((options = match(r"synthetic_([0-9]+)", dataset)) != nothing)
     # note G is the entity graph, A is the adjacency matrices for the graphical model
-    G, _, Y, X, _, _ = prepare_data(dataset; N=1, p1=0, p2=3, s=[2,2,2], d=[1,1,1]);
+    G, _, Y, X, _, _ = prepare_data(dataset; N=1, p1=6, p2=0, s=[], d=[]);
     feats = vcat(X[1], X[2])[:,:,1];
     labels = X[3][:,:,1];
     n = nv(G);

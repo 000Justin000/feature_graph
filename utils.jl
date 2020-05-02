@@ -10,6 +10,7 @@ import Flux: train!;
 
 eye(n) = diagm(0=>ones(n));
 speye(n) = spdiagm(0=>ones(n));
+A2D(A) = spdiagm(0=>sum(A,dims=1)[:]);
 
 function rand_split(n, ptr)
     """
