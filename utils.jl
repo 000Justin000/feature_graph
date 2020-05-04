@@ -11,6 +11,7 @@ import Flux: train!;
 eye(n) = diagm(0=>ones(n));
 speye(n) = spdiagm(0=>ones(n));
 A2D(A) = spdiagm(0=>sum(A,dims=1)[:]);
+normalized_laplacian(G) = spdiagm(0=>degree(G).^-0.5) * laplacian_matrix(G) * spdiagm(0=>degree(G).^-0.5);
 
 function rand_split(n, ptr)
     """

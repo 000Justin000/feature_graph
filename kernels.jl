@@ -88,33 +88,28 @@ function parallel_mBCG(mmm_A::Function, B::Array{Float64,2}; PC::Function=Y->Y, 
     return hcat(Xs...), vcat(TTs...);
 end
 
-sym_abs(x) = abs(x);
-sym_abs(x::TrackedReal) = track(sym_abs, x);
-@grad sym_abs(x) = (data(abs(x)), Δ->tuple(Δ*sign(x)));
-
-function getdiagΓ(α, β; A)
-    return β * (ones(size(A[1],1)) + sum(sym_abs(α_)*collect(diag(D_)) for (α_,D_) in zip(α,A2D.(A))));
+#-------------------------------------
+# model dependent part
+#-------------------------------------
+function getdiagΓ(α; A)
+    return sum(α_*spdiagm(0=>diag(A_)) for (α_,A_) in zip(α,A));
 end
 
-function getΓ(α, β; A)
-    return β * (speye(size(A[1],1)) + sum((sym_abs(α_)*D_ - α_*A_) for (α_,D_,A_) in zip(α,A2D.(A),A)));
+function getΓ(α; A)
+    return sum(α_*A_ for (α_,A_) in zip(α,A));
 end
 
-function get∂Γ∂α(α::Vector{Float64}, β::Float64; A)
-    return [β*sign(α_)*D_ - β*A_ for (α_,D_,A_) in zip(α,A2D.(A),A)];
+function get∂Γ∂α(α::Vector{Float64}; A)
+    return A;
 end
+#-------------------------------------
 
-function get∂Γ∂β(α::Vector{Float64}, β::Float64; A)
-    return speye(size(A[1],1)) + sum((sym_abs(α_)*D_ - α_*A_) for (α_,D_,A_) in zip(α,A2D.(A),A));
-end
-
-logdetΓ(α::TrackedVector, β::TrackedReal; A, P, t, k) = track(logdetΓ, α, β; A=A, P=P, t=t, k=k);
-@grad function logdetΓ(α, β; A, P, t, k)
+logdetΓ(α::TrackedVector; A, P, t, k) = track(logdetΓ, α; A=A, P=P, t=t, k=k);
+@grad function logdetΓ(α; A, P, t, k)
     """
     Args:
          α: model parameter vector
-         β: model parameter
-         A: adjacency matrix vector
+         A: matrix vector
          P: index set
          t: # of trial vectors
          k: # of Lanczos tridiagonal iterations
@@ -126,14 +121,12 @@ logdetΓ(α::TrackedVector, β::TrackedReal; A, P, t, k) = track(logdetΓ, α, �
     (length(P) == 0) && return 0.0, Δ -> (zeros(length(α)), 0.0);
 
     α = data(α);
-    β = data(β);
 
     n = length(P);
     Z = randn(n,t);
 
-    Γ = getΓ(α, β; A=A);
-    ∂Γ∂α = get∂Γ∂α(α, β; A=A);
-    ∂Γ∂β = get∂Γ∂β(α, β; A=A);
+    Γ = getΓ(α; A=A);
+    ∂Γ∂α = get∂Γ∂α(α; A=A);
 
     X, TT = parallel_mBCG(Y->Γ[P,P]*Y, Z; k=k);
 
@@ -147,27 +140,26 @@ logdetΓ(α::TrackedVector, β::TrackedReal; A, P, t, k) = track(logdetΓ, α, �
 
     trΓiM(M) = sum(X.*(M[P,P]*Z))/t;
     ∂Ω∂α = map(trΓiM, ∂Γ∂α);
-    ∂Ω∂β = trΓiM(∂Γ∂β);
 
-    return Ω, Δ -> (Δ*∂Ω∂α, Δ*∂Ω∂β)
+    return Ω, Δ -> tuple(Δ*∂Ω∂α);
 end
 
 function test_logdetΓ(n=100)
     G = random_regular_graph(n, 3);
-    A = [adjacency_matrix(G)];
+    A = [laplacian_matrix(G), speye(n)];
     L = randperm(n)[1:div(n,2)];
 
     #------------------------
-    p = param(randn(2));
-    getα() = p[1:1];
-    getβ() = softplus(p[2]);
+    p = param(rand(2));
+    getα() = p[:];
     #------------------------
 
     #------------------------
     # true value
     #------------------------
-    Γ = Tracker.collect(getΓ(getα(), getβ(); A=A));
-    Ω = logdet(Tracker.collect(Γ[L,L]));
+    Γ = Array{eltype(p)}(undef, n, n);
+    Γ .= getΓ(getα(); A=A);
+    Ω = logdet(Γ[L,L]);
     #------------------------
     Tracker.back!(Ω, 1);
     @printf("accurate:       [%s]\n", array2str(Tracker.grad(p)));
@@ -177,7 +169,7 @@ function test_logdetΓ(n=100)
     #------------------------
     # approximation
     #------------------------
-    Ω = logdetΓ(getα(), getβ(); A=A, P=L, t=128, k=32);
+    Ω = logdetΓ(getα(); A=A, P=L, t=128, k=32);
     #------------------------
     Tracker.back!(Ω, 1);
     @printf("approximate:    [%s]\n", array2str(Tracker.grad(p)));
@@ -185,14 +177,13 @@ function test_logdetΓ(n=100)
     #------------------------
 end
 
-quadformSC(α::TrackedVector, β::TrackedReal, rL; A, L) = track(quadformSC, α, β, rL; A=A, L=L);
-@grad function quadformSC(α, β, rL; A, L)
+quadformSC(α::TrackedVector, rL; A, L) = track(quadformSC, α, rL; A=A, L=L);
+@grad function quadformSC(α, rL; A, L)
     """
     Args:
          α: model parameter vector
-         β: model parameter
         rL: noise on vertex set L
-         A: adjacency matrix vector
+         A: matrix vector
          L: index set
 
     Return:
@@ -200,12 +191,10 @@ quadformSC(α::TrackedVector, β::TrackedReal, rL; A, L) = track(quadformSC, α,
     """
 
     α = data(α);
-    β = data(β);
     rL = data(rL);
 
-    Γ = getΓ(α, β; A=A);
-    ∂Γ∂α = get∂Γ∂α(α, β; A=A);
-    ∂Γ∂β = get∂Γ∂β(α, β; A=A);
+    Γ = getΓ(α; A=A);
+    ∂Γ∂α = get∂Γ∂α(α; A=A);
 
     U = setdiff(1:size(A[1],1), L);
 
@@ -213,15 +202,14 @@ quadformSC(α::TrackedVector, β::TrackedReal, rL; A, L) = track(quadformSC, α,
 
     quadform_partials(M) = rL'*M[L,L]*rL - rL'*M[L,U]*cg(Γ[U,U],Γ[U,L]*rL) + rL'*Γ[L,U]*cg(Γ[U,U],M[U,U]*cg(Γ[U,U],Γ[U,L]*rL)) - rL'*Γ[L,U]*cg(Γ[U,U],M[U,L]*rL);
     ∂Ω∂α = map(quadform_partials, ∂Γ∂α);
-    ∂Ω∂β = quadform_partials(∂Γ∂β);
     ∂Ω∂rL = 2*Γ[L,L]*rL - 2*Γ[L,U]*cg(Γ[U,U],Γ[U,L]*rL);
 
-    return Ω, Δ -> (Δ*∂Ω∂α, Δ*∂Ω∂β, Δ*∂Ω∂rL);
+    return Ω, Δ -> tuple(Δ*∂Ω∂α, Δ*∂Ω∂rL);
 end
 
 function test_quadformSC(n=100)
     G = random_regular_graph(n, 3);
-    A = [adjacency_matrix(G)];
+    A = [laplacian_matrix(G), speye(n)];
 
     #------------------------
     L = randperm(n)[1:div(n,2)];
@@ -231,15 +219,16 @@ function test_quadformSC(n=100)
     #------------------------
 
     #------------------------
-    p = param(randn(2));
-    getα() = p[1:1];
-    getβ() = softplus(p[2]);
+    p = param(rand(2));
+    getα() = p[:];
     #------------------------
 
     #------------------------
     # true value
     #------------------------
-    Γ = Tracker.collect(getΓ(getα(), getβ(); A=A));
+    Γ = Array{eltype(p)}(undef, n, n);
+    Γ .= getΓ(getα(); A=A);
+    Γ = Tracker.collect(Γ);
     SC = Γ[L,L] - Γ[L,U]*inv(Γ[U,U])*Γ[U,L];
     Ω = getrL()' * SC * getrL();
     #------------------------
@@ -251,7 +240,7 @@ function test_quadformSC(n=100)
     #------------------------
     # approximation
     #------------------------
-    Ω = quadformSC(getα(), getβ(), getrL(); A=A, L=L);
+    Ω = quadformSC(getα(), getrL(); A=A, L=L);
     #------------------------
     Tracker.back!(Ω, 1);
     @printf("accurate:       [%s],    [%s]\n", array2str(Tracker.grad(p)), array2str(Tracker.grad(rL)[1:10]));
@@ -259,14 +248,13 @@ function test_quadformSC(n=100)
     #------------------------
 end
 
-ΓX(α::TrackedVector, β::TrackedReal, X; A, U, L) = track(ΓX, α, β, X; A=A, U=U, L=L);
-@grad function ΓX(α, β, X; A, U, L)
+ΓX(α::TrackedVector, X; A, U, L) = track(ΓX, α, X; A=A, U=U, L=L);
+@grad function ΓX(α, X; A, U, L)
     """
     Args:
          α: model parameter vector
-         β: model parameter
          X: matrix
-         A: adjacency matrix vector
+         A: matrix vector
          U: index set
          L: index set
 
@@ -276,18 +264,16 @@ end
     @assert (size(X,1) == length(L))
 
     α = data(α);
-    β = data(β);
     X = data(X);
 
-    Γ = getΓ(α, β; A=A);
-    ∂Γ∂α = get∂Γ∂α(α, β; A=A);
-    ∂Γ∂β = get∂Γ∂β(α, β; A=A);
+    Γ = getΓ(α; A=A);
+    ∂Γ∂α = get∂Γ∂α(α; A=A);
 
     function sensitivity(ΔY)
         ΔΓUL = ΔY * X';
         ΔX = Γ[U,L]' * ΔY;
 
-        return ([sum(ΔΓUL .* ∂Γ∂α_[U,L]) for ∂Γ∂α_ in ∂Γ∂α], sum(ΔΓUL .* ∂Γ∂β[U,L]), ΔX);
+        return tuple([sum(ΔΓUL .* ∂Γ∂α_[U,L]) for ∂Γ∂α_ in ∂Γ∂α], ΔX);
     end
 
     return Γ[U,L]*X, sensitivity;
@@ -295,7 +281,7 @@ end
 
 function test_ΓB(n=100, m=20)
     G = random_regular_graph(n, 3);
-    A = [adjacency_matrix(G)];
+    A = [adjacency_matrix(G), speye(n)];
 
     #------------------------
     L = randperm(n)[1:div(n,2)];
@@ -305,15 +291,14 @@ function test_ΓB(n=100, m=20)
     #------------------------
 
     #------------------------
-    p = param(randn(2));
-    getα() = p[1:1];
-    getβ() = softplus(p[2]);
+    p = param(rand(2));
+    getα() = p[:];
     #------------------------
 
     #------------------------
     # true value
     #------------------------
-    Γ = getΓ(getα(), getβ(); A=A);
+    Γ = getΓ(getα(); A=A);
     Ω = sum((Γ[U,L]*X) .* C);
     #------------------------
     Tracker.back!(Ω, 1);
@@ -325,7 +310,7 @@ function test_ΓB(n=100, m=20)
     #------------------------
     # approximation
     #------------------------
-    Ω = sum(ΓX(getα(), getβ(), X; A=A, L=L, U=U) .* C);
+    Ω = sum(ΓX(getα(), X; A=A, L=L, U=U) .* C);
     #------------------------
     Tracker.back!(Ω, 1);
     ΔX1 = Tracker.grad(X);
