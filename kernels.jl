@@ -92,7 +92,7 @@ end
 # model dependent part
 #-------------------------------------
 function getdiagΓ(α; A)
-    return sum(α_*spdiagm(0=>diag(A_)) for (α_,A_) in zip(α,A));
+    return sum(α_*collect(diag(A_)) for (α_,A_) in zip(α,A));
 end
 
 function getΓ(α; A)

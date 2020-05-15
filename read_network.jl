@@ -108,9 +108,65 @@ function read_county(prediction, year)
     end
 
     y = ff[:,pos];
-    f = [vcat(ff[i,1:pos-1], ff[i,pos+1:end]) for i in 1:size(dat,1)];
+    f = [vcat(ff[i,1:pos-1], ff[i,pos+1:end]) for i in 1:size(ff,1)];
 
     return g, [adjacency_matrix(g)], y, f;
+end
+
+function read_ward(prediction, year)
+    code = CSV.read("datasets/london/code.csv", header=1);
+    W = CSV.read("datasets/london/W.csv", header=1)
+    dat = CSV.read("datasets/london/MaycoordLondon.csv", header=1);
+
+    info = join(code[:,2:end], dat, on=names(code)[2] => names(dat)[1], kind=:left);
+
+    indices = (!ismissing).(info[:,2]);
+    W0 = Matrix(W[:,2:end] .!== 0.0)[indices, indices];
+    info0 = info[indices,:];
+
+    function parse_mean_fill(vr, normalize=false)
+        vb = mean(map(x->(typeof(x)<:Union{Float64,Int} ? x : parse(Float64, replace(x, ","=>""))), filter(!ismissing, vr)));
+        vv = collect(map(x->ismissing(x) ? vb : (typeof(x)<:Union{Float64,Int} ? x : parse(Float64, replace(x, ","=>""))), vr));
+        if normalize
+            vv = (vv .- vb) / std(vv);
+        end
+        return vv;
+    end
+
+    col = [5, 6, 7, 10, 11];
+    ff = zeros(Float32, size(info0,1),6);
+    for i in 1:5
+        ff[:,i] = parse_mean_fill(info0[:,col[i]], true);
+    end
+
+    if year == "2016"
+        ff[:,6] = parse_mean_fill(log.(info0[:,3]), true);
+    elseif year == "2012"
+        ff[:,6] = parse_mean_fill(log.(info0[:,4]), true);
+    else
+        error("unexpected year");
+    end
+
+    if prediction == "edu"
+        pos = 1;
+    elseif prediction == "age"
+        pos = 2;
+    elseif prediction == "gender"
+        pos = 3;
+    elseif prediction == "income"
+        pos = 4;
+    elseif prediction == "populationsize"
+        pos = 5;
+    elseif prediction == "election"
+        pos = 6;
+    else
+        error("unexpected prediction type");
+    end
+
+    y = ff[:,pos];
+    f = [vcat(ff[i,1:pos-1], ff[i,pos+1:end]) for i in 1:size(ff,1)];
+
+    return Graph(W0), [float(W0)], y, f;
 end
 
 function read_twitch(cnm, dim_reduction=false, dim_embed=8)
@@ -325,6 +381,7 @@ end
 function read_network(network_name)
     (p = match(r"ising_([0-9]+)_([0-9\.\-]+)_([0-9\.\-]+)$", network_name)) != nothing && return simulate_ising(parse(Int, p[1]), parse(Float64, p[2]), parse(Float64, p[3]));
     (p = match(r"county_([a-z]+)_([0-9]+)$", network_name)) != nothing && return read_county(p[1], parse(Int, p[2]));
+    (p = match(r"ward_([a-z]+)_([0-9]*)$", network_name)) != nothing && return read_ward(p[1], p[2]);
     (p = match(r"twitch_([0-9a-zA-Z]+)_([a-z]+)_([0-9]+)$", network_name)) != nothing && return read_twitch(p[1], parse(Bool, p[2]), parse(Int, p[3]));
     (p = match(r"sexual_([0-9]+)$", network_name)) != nothing && return read_sexual(parse(Int, p[1]));
     (p = match(r"Anaheim", network_name)) != nothing       && return read_transportation_network(network_name, 8, 1:2, [3,4,5,8], 6, [1,2,4], 1:416);

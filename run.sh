@@ -1,10 +1,12 @@
-julia learn.jl 0 2>&1 | tee learn_0.60_uncompressed_0 &
-julia learn.jl 1 2>&1 | tee learn_0.60_uncompressed_1 &
-julia learn.jl 2 2>&1 | tee learn_0.60_uncompressed_2 &
-julia learn.jl 3 2>&1 | tee learn_0.60_uncompressed_3 &
-julia learn.jl 4 2>&1 | tee learn_0.60_uncompressed_4 &
-julia learn.jl 5 2>&1 | tee learn_0.60_uncompressed_5 &
-julia learn.jl 6 2>&1 | tee learn_0.60_uncompressed_6 &
-julia learn.jl 7 2>&1 | tee learn_0.60_uncompressed_7 &
-julia learn.jl 8 2>&1 | tee learn_0.60_uncompressed_8 &
-julia learn.jl 9 2>&1 | tee learn_0.60_uncompressed_9 &
+julia main.jl 0 county_election_2012 true  collection(1:1)       collect(0.1:0.1:0.6) 2>&1 | tee county_income_00 &
+julia main.jl 0 county_election_2012 true  collection(5:5)       collect(0.1:0.1:0.6) 2>&1 | tee county_education_00 &
+julia main.jl 0 county_election_2012 true  collection(6:6)       collect(0.1:0.1:0.6) 2>&1 | tee county_unemployment_00 &
+julia main.jl 0 county_election_2012 true  collection(7:7)       collect(0.1:0.1:0.6) 2>&1 | tee county_election_00 &
+julia main.jl 0   ward_election_2012 true  collection(1:1)       collect(0.1:0.1:0.6) 2>&1 | tee ward_edu_00 &
+julia main.jl 0   ward_election_2012 true  collection(2:2)       collect(0.1:0.1:0.6) 2>&1 | tee ward_age_00 &
+julia main.jl 0   ward_election_2012 true  collection(3:3)       collect(0.1:0.1:0.6) 2>&1 | tee ward_gender_00 &
+julia main.jl 0   ward_election_2012 true  collection(4:4)       collect(0.1:0.1:0.6) 2>&1 | tee ward_income_00 &
+julia main.jl 0   ward_election_2012 true  collection(5:5)       collect(0.1:0.1:0.6) 2>&1 | tee ward_populationsize_00 &
+julia main.jl 0   ward_election_2012 true  collection(6:6)       collect(0.1:0.1:0.6) 2>&1 | tee ward_election_00 &
+julia main.jl 0          cora_true_8 true  collection(9:15)      collect(0.1:0.1:0.6) 2>&1 | tee cora_8_00 &
+julia main.jl 0         cora_false_0 false collection(1434:1440) collect(0.1:0.1:0.6) 2>&1 | tee cora_00 &

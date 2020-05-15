@@ -46,17 +46,32 @@ function array2str(arr)
     return join(arr, ", ");
 end
 
-function R2(y, y_)
+function R2(y_, y)
     """
     Args:
-         y: true labels
         y_: predicted labels
+         y: true labels
 
     Return:
         coefficients of determination
     """
+    @assert ((ndims(y_) == ndims(y) == 1) || (size(y_,1) == size(y,1) == 1)) "unexpected input size"
 
-    return 1.0 - sum((y_ .- y).^2.0) / sum((y .- mean(y)).^2.0);
+    return 1.0 - sum((y_[:] .- y[:]).^2.0) / sum((y[:] .- mean(y[:])).^2.0);
+end
+
+function probmax(y_, y)
+    """
+    Args:
+        y_: predicted probabilities
+         y: true labels in one-hot encoding
+
+    Return:
+        accuracy
+    """
+    @assert (ndims(y_) == ndims(y) == 2) "unexpected input size"
+
+    return sum(y[argmax(y_; dims=1)]) / size(y,2);
 end
 
 function expansion(m, ids)
@@ -84,25 +99,25 @@ function expansion(m, ids)
     return sparse(II, JJ, VV, m, m_);
 end
 
-function interpolate(L, xL; Γ)
-    """
-    Args:
-         L: indices of observation
-        xL: observation
-         Γ: label propagation matrix
-
-    Returns:
-         x: interpolated value over entire graph
-    """
-
-    n = size(Γ,1);
-    U = setdiff(1:n, L);
-    xU = cg(Γ[U,U], -Γ[U,L]*xL);
-
-    x = expansion(n,L) * xL + expansion(n,U) * xU;
-
-    return x;
-end
+# function interpolate(L, xL; Γ)
+#     """
+#     Args:
+#          L: indices of observation
+#         xL: observation
+#          Γ: label propagation matrix
+#
+#     Returns:
+#          x: interpolated value over entire graph
+#     """
+#
+#     n = size(Γ,1);
+#     U = setdiff(1:n, L);
+#     xU = cg(Γ[U,U], -Γ[U,L]*xL);
+#
+#     x = expansion(n,L) * xL + expansion(n,U) * xU;
+#
+#     return x;
+# end
 
 function reset_grad!(xs...)
     for x in xs
