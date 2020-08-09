@@ -378,6 +378,27 @@ function read_cora(dim_reduction=false, dim_embed=8)
     return g, [adjacency_matrix(g)], y, f;
 end
 
+function read_cropsim(type, year, num_predictors)
+    meta = CSV.read("datasets/more-graphs/cropsim/cropsim-" * year * "-" * type * "-metadata.csv", header=0); n = size(meta,1);
+    smat = CSV.read("datasets/more-graphs/cropsim/cropsim-" * year * "-" * type * ".smat", header=1);
+
+    g = Graph(n);
+    for i in 1:size(smat, 1)
+        add_edge!(g, smat[i,1]+1, smat[i,2]+1);
+    end
+
+    y = std_normalize(log.(meta[!,1] .+ 1.0));
+
+    ff = zeros(Float32, n,num_predictors);
+    for i in 1:num_predictors
+        ff[:,i] = std_normalize(log.(meta[!,i+1] .+ 1.0));
+    end
+
+    f = [ff[i,:] for i in 1:size(ff,1)];
+
+    return g, [adjacency_matrix(g)], y, f;
+end
+
 function read_network(network_name)
     (p = match(r"ising_([0-9]+)_([0-9\.\-]+)_([0-9\.\-]+)$", network_name)) != nothing && return simulate_ising(parse(Int, p[1]), parse(Float64, p[2]), parse(Float64, p[3]));
     (p = match(r"county_([a-z]+)_([0-9]+)$", network_name)) != nothing && return read_county(p[1], parse(Int, p[2]));
@@ -387,4 +408,5 @@ function read_network(network_name)
     (p = match(r"Anaheim", network_name)) != nothing       && return read_transportation_network(network_name, 8, 1:2, [3,4,5,8], 6, [1,2,4], 1:416);
     (p = match(r"ChicagoSketch", network_name)) != nothing && return read_transportation_network(network_name, 7, 1:2, [3,4,5,8], 1, [1,2,3], 388:933);
     (p = match(r"cora_([a-z]+)_([0-9]+)", network_name)) != nothing && return read_cora(parse(Bool, p[1]), parse(Int, p[2]));
+    (p = match(r"cropsim_([a-z]+)_([0-9]+)_([0-9]+)", network_name)) != nothing && return read_cropsim(p[1], p[2], parse(Int, p[3]));
 end

@@ -227,6 +227,22 @@ function prepare_data(dataset; N=1, p1=1, p2=1, s=[2], d=[1])
         X = [unsqueeze(hcat([eye(7)[:,label] for label in labels]...), 3)];
         Y = f32(hcat(feats...) .- mean(feats));
         Z = nothing;
+    elseif (match(r"cropsim_([a-z]+)_([0-9]+)_([0-9]+)", dataset) != nothing)
+        G, _, labels, feats = read_network(dataset);
+        for i in vertices(G)
+            rem_edge!(G, i,i);
+        end
+
+        n = nv(G);
+        p1, p2 = length(feats[1]) + length(labels[1]), 0;
+        s, d = Int[], Int[];
+        p = p1 + sum(d);
+        interaction_list=[];
+        A = [];
+        α0 = nothing;
+        X = [];
+        Y = unsqueeze(hcat([vcat(feat,label) for (feat,label) in zip(feats,labels)]...), 3);
+        Z = nothing;
     end
 
     λ_getα = φ -> getα(φ, p; interaction_list=interaction_list);
@@ -234,9 +250,10 @@ function prepare_data(dataset; N=1, p1=1, p2=1, s=[2], d=[1])
     return G, A, λ_getα, s, d, α0, X, Y, Z;
 end
 
-ARGS = ["0", "ward_election_2012", "true", "collect(1:1)", "collect(0.1:0.1:0.6)"];
-ARGS = ["0", "cora_true_8", "true", "collect(9:15)", "collect(0.1:0.1:0.6)"];
-ARGS = ["0", "cora_false_0", "false", "collect(1434:1440)", "collect(0.1:0.1:0.6)"];
+# ARGS = ["0", "ward_election_2012",         "true",     "1:1",    "0.1:0.1:0.6", "0.9"];
+# ARGS = ["0", "cora_true_8",                "true",     "9:15",   "0.1:0.1:0.6", "0.9"];
+# ARGS = ["0", "cora_false_0",               "false", "1434:1440", "0.1:0.1:0.6", "0.9"];
+# ARGS = ["0", "cropsim_harvestarea_2000_5", "false",    "6:6",    "0.1:0.1:0.6", "0.9"];
 
 seed_val = Meta.parse(ARGS[1]) |> eval;
 Random.seed!(seed_val);
@@ -263,7 +280,7 @@ FIDX(fidx, V=vertices(G)) = [(i-1)*p+j for i in V for j in fidx];
 function fit_model(seed_val=0)
     Random.seed!(seed_val);
 
-    n_step = 500;
+    n_step = 1000;
 
     V = collect(1:size(A[1],1));
     L = FIDX(1:p1);
@@ -612,7 +629,7 @@ function run_dataset(G, feats, labels, ll, uu; predictor="zero", correlation="ze
             rL = (labelL - data(pL));
         # for classification task, if the prediction is correct, residual should be 0
         else
-            gap = 0.2;
+            gap = 0.3;
 
             function process(x::Vector, loc::Int)
                 @assert (all(x .>= 0) && abs(sum(x) - 1.0) < 1.0e-6) "unexpected probability vector"
@@ -646,7 +663,7 @@ function run_dataset(G, feats, labels, ll, uu; predictor="zero", correlation="ze
 
     function smooth(feats, S; η=0.9)
         feats_ = feats;
-        for _ in 1:1000
+        for _ in 1:100
             feats_ = η*feats_*S + (1-η)*feats;
         end
         return feats_;
@@ -656,11 +673,10 @@ function run_dataset(G, feats, labels, ll, uu; predictor="zero", correlation="ze
 
     Random.seed!(seed_val);
     n_batch = Int(ceil(length(ll)*0.1));
-    n_step = 1000;
+    n_step = 300;
     classification = (size(labels,1) != 1);
     accuracyFun = classification ? probmax : R2;
-    # η = (α != nothing) ? mean(α[lidx]./(α[lidx]+α[p.+lidx])) : 0.9;
-    η = 0.9;
+    η = (α != nothing) ? mean(α[lidx]./(α[lidx]+α[p.+lidx])) : parse(Float64, ARGS[6]);
 
     S = spdiagm(0=>degree(G).^-0.5) * adjacency_matrix(G) * spdiagm(0=>degree(G).^-0.5);
     feature_smoothing && (feats = smooth(feats, S; η = η));
@@ -673,7 +689,7 @@ function run_dataset(G, feats, labels, ll, uu; predictor="zero", correlation="ze
         lls = Chain(Dense(size(feats,1), size(labels,1)), classification ? softmax : identity);
         getPrediction = L -> lls(feats[:,L]);
         θ = Flux.params(lls);
-        optθ = Optimiser(WeightDecay(1.0e-3), Descent(1.0e-2));
+        optθ = Optimiser(WeightDecay(1.0e-3), ADAM(1.0e-2));
     elseif predictor == "mlp"
         mlp = Chain(Dense(size(feats,1), dim_h, relu), Dense(dim_h, dim_h, relu), Dense(dim_h, dim_h, relu), Dense(dim_h, size(labels,1)), classification ? softmax : identity);
         getPrediction = L -> mlp(feats[:,L]);
@@ -692,7 +708,8 @@ function run_dataset(G, feats, labels, ll, uu; predictor="zero", correlation="ze
     if correlation == "zero"
         Γ = speye(n);
     elseif correlation == "homo"
-        Γ = speye(n) + (η / (1 - η))*normalized_laplacian(G);
+        # Γ = speye(n) + (η / (1 - η))*normalized_laplacian(G);
+        Γ = speye(n) + 10.0*normalized_laplacian(G);
     else
         error("unexpected correlation");
     end
@@ -703,23 +720,25 @@ function run_dataset(G, feats, labels, ll, uu; predictor="zero", correlation="ze
     cb() = @printf("%6.3f,    %6.3f,    %6.3f\n", loss(ll), loss(uu), accuracyFun(pred(uu,ll; labelL=labels[:,ll], predict=getPrediction, Γ=Γ), labels[:,uu]));
     (predictor != "zero") && train!(loss, [θ], mini_batches, [optθ]; cb=()->nothing, cb_skip=200);
 
-    @printf("%s ", prefix);
-    @printf("AC:    %10.4f\n", accuracyFun(pred(uu,ll; labelL=labels[:,ll], predict=getPrediction, Γ=Γ), labels[:,uu]));
+    @printf("%s AC:    %10.4f\n", prefix, accuracyFun(pred(uu,ll; labelL=labels[:,ll], predict=getPrediction, Γ=Γ), labels[:,uu]));
 end
 
 split_ratios = Meta.parse(ARGS[5]) |> eval;
 for split_ratio in split_ratios
-    ll, uu = rand_split(nv(G), split_ratio);
-    fitα && print_vol(lidx, fidx, ll, uu; seed_val=seed_val);
+    for seed_increment in 1:1
+        Random.seed!(seed_val + seed_increment);
 
-    feats, labels = Y[fidx,:,1], ((length(X) == 0) ? Y[lidx,:,1] : X[1][:,:,1]);
-    run_dataset(G, feats, labels, ll, uu, predictor="zero",   correlation="homo", feature_smoothing=false, seed_val=seed_val, prefix="    LP");
-    run_dataset(G, feats, labels, ll, uu, predictor="linear", correlation="zero", feature_smoothing=false, seed_val=seed_val, prefix="    LR");
-    run_dataset(G, feats, labels, ll, uu, predictor="linear", correlation="zero", feature_smoothing=true,  seed_val=seed_val, prefix="   SLR");
-    run_dataset(G, feats, labels, ll, uu, predictor="linear", correlation="homo", feature_smoothing=false, seed_val=seed_val, prefix=" LR_LP");
-    run_dataset(G, feats, labels, ll, uu, predictor="linear", correlation="homo", feature_smoothing=true,  seed_val=seed_val, prefix="SLR_LP");
-    run_dataset(G, feats, labels, ll, uu, predictor="gnn",    correlation="zero", feature_smoothing=false, seed_val=seed_val, prefix="   GNN");
-    run_dataset(G, feats, labels, ll, uu, predictor="gnn",    correlation="homo", feature_smoothing=false, seed_val=seed_val, prefix="GNN_LP");
+        ll, uu = rand_split(nv(G), split_ratio);
+        fitα && print_vol(lidx, fidx, ll, uu; seed_val=seed_val);
 
-    println();
+        feats, labels = Y[fidx,:,1], ((length(X) == 0) ? Y[lidx,:,1] : X[1][:,:,1]);
+        run_dataset(G, feats, labels, ll, uu, predictor="zero",   correlation="homo", feature_smoothing=false, seed_val=seed_val, prefix="    LP");
+        run_dataset(G, feats, labels, ll, uu, predictor="linear", correlation="zero", feature_smoothing=false, seed_val=seed_val, prefix="    LR");
+        run_dataset(G, feats, labels, ll, uu, predictor="linear", correlation="zero", feature_smoothing=true,  seed_val=seed_val, prefix="   SLR");
+        run_dataset(G, feats, labels, ll, uu, predictor="linear", correlation="homo", feature_smoothing=false, seed_val=seed_val, prefix=" LR_LP");
+        run_dataset(G, feats, labels, ll, uu, predictor="linear", correlation="homo", feature_smoothing=true,  seed_val=seed_val, prefix="SLR_LP");
+        run_dataset(G, feats, labels, ll, uu, predictor="gnn",    correlation="zero", feature_smoothing=false, seed_val=seed_val, prefix="   GNN");
+        run_dataset(G, feats, labels, ll, uu, predictor="gnn",    correlation="homo", feature_smoothing=false, seed_val=seed_val, prefix="GNN_LP");
+    end
+    @printf("\n");
 end
