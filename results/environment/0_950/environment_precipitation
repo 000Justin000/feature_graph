@@ -1,0 +1,96 @@
+    LP AC:        0.5076
+    LR AC:        0.4918
+   SLR AC:        0.5334
+ LR_LP AC:        0.6775
+SLR_LP AC:        0.7028
+   GNN AC:        0.6927
+GNN_LP AC:        0.7844
+
+    LP AC:        0.6767
+    LR AC:        0.5327
+   SLR AC:        0.5492
+ LR_LP AC:        0.7768
+SLR_LP AC:        0.7789
+   GNN AC:        0.7119
+GNN_LP AC:        0.8296
+
+    LP AC:        0.7626
+    LR AC:        0.5311
+   SLR AC:        0.5473
+ LR_LP AC:        0.8138
+SLR_LP AC:        0.8174
+   GNN AC:        0.7120
+GNN_LP AC:        0.8531
+
+    LP AC:        0.8065
+    LR AC:        0.5323
+   SLR AC:        0.5432
+ LR_LP AC:        0.8391
+SLR_LP AC:        0.8396
+   GNN AC:        0.7162
+GNN_LP AC:        0.8637
+
+    LP AC:        0.8285
+    LR AC:        0.5515
+   SLR AC:        0.5598
+ LR_LP AC:        0.8663
+SLR_LP AC:        0.8610
+   GNN AC:        0.7317
+GNN_LP AC:        0.8837
+
+    LP AC:        0.8401
+    LR AC:        0.5531
+   SLR AC:        0.5557
+ LR_LP AC:        0.8715
+SLR_LP AC:        0.8648
+   GNN AC:        0.7233
+GNN_LP AC:        0.8859
+
+    LP AC:        0.8574
+    LR AC:        0.5428
+   SLR AC:        0.5495
+ LR_LP AC:        0.8746
+SLR_LP AC:        0.8703
+   GNN AC:        0.7268
+GNN_LP AC:        0.8919
+
+    LP AC:        0.8630
+    LR AC:        0.5391
+   SLR AC:        0.5432
+ LR_LP AC:        0.8761
+SLR_LP AC:        0.8720
+   GNN AC:        0.7340
+GNN_LP AC:        0.8909
+
+    LP AC:        0.8635
+    LR AC:        0.5387
+   SLR AC:        0.5384
+ LR_LP AC:        0.8760
+SLR_LP AC:        0.8699
+   GNN AC:        0.7317
+GNN_LP AC:        0.8893
+
+    LP AC:        0.8772
+    LR AC:        0.5534
+   SLR AC:        0.5521
+ LR_LP AC:        0.8896
+SLR_LP AC:        0.8848
+   GNN AC:        0.7348
+GNN_LP AC:        0.8984
+
+    LP AC:        0.8769
+    LR AC:        0.5621
+   SLR AC:        0.5649
+ LR_LP AC:        0.8931
+SLR_LP AC:        0.8847
+   GNN AC:        0.7384
+GNN_LP AC:        0.8971
+
+    LP AC:        0.9006
+    LR AC:        0.5640
+   SLR AC:        0.5666
+ LR_LP AC:        0.9147
+SLR_LP AC:        0.9080
+   GNN AC:        0.7438
+GNN_LP AC:        0.9178
+
