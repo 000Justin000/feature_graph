@@ -29,7 +29,7 @@ end
 #-----------------------------------------------------------------------
 # model dependent 1: compute the adjacency matrix of the graphical model
 #-----------------------------------------------------------------------
-function getA(G, p; interaction_list=vcat([(i,i) for i in 1:p], [(i,j) for i in 1:p for j in i+1:p]))
+function get_adjacency_matrices(G, p; interaction_list=vcat([(i,i) for i in 1:p], [(i,j) for i in 1:p for j in i+1:p]))
     """
     Given a graph, generate the graphical model that has every vertex mapped to
     p vertices, with p of them representing features
@@ -49,11 +49,14 @@ function getA(G, p; interaction_list=vcat([(i,i) for i in 1:p], [(i,j) for i in 
     A = Vector{SparseMatrixCSC}();
 
     # connections among corresponding features on different vertices
+    # A_{i} = L ⊗ J_{ii}
     for i in 1:p
         push!(A, kron(L, sparse([i], [i], [1.0], p, p)));
     end
 
     # connections among different features on same vertices
+    # A_{ii} = I ⊗ J_{ii}
+    # A_{ij} = I ⊗ J_{ij}
     for (i,j) in interaction_list
         if (j == i)
             push!(A, kron(speye(n), sparse([i], [i], [1.0], p, p)));
@@ -137,11 +140,11 @@ function prepare_data(dataset; N=1, p1=1, p2=1, s=[2], d=[1])
         n = nv(G);
         p = p1 + sum(d);
         interaction_list=vcat([(i,i) for i in 1:p], [(i,j) for i in 1:p for j in i+1:p]);
-        A = getA(G, p; interaction_list=interaction_list);
+        A = get_adjacency_matrices(G, p; interaction_list=interaction_list);
 
         T = randn(p+1,p); Q = inv((T'*T)/(p+1));
         α0 = vcat(exp.(randn(p)), [Q[i,j] for (i,j) in interaction_list]);
-        @printf("α0: %s\n", array2str(α0));
+        @printf("α0: %s\n", array2str(α0)); flush(stdout);
 
         cr = [p1+ss_:p1+ff_ for (ss_,ff_) in zip(get_ssff(d)...)];
 
@@ -166,7 +169,9 @@ function prepare_data(dataset; N=1, p1=1, p2=1, s=[2], d=[1])
                 end
                 x;
              end for logPX_ in logPX(Z)];
-    elseif (match(r"county_election_([0-9]+)", dataset) != nothing) || (match(r"ward_election_([0-9]+)", dataset) != nothing)
+    elseif ((match(r"county_(.+)_([0-9]+)", dataset) != nothing) ||
+            (match(r"environment_(.+)_([0-9]+)", dataset) != nothing) ||
+            (match(r"ward_(.+)_([0-9]+)", dataset) != nothing))
         G, _, labels, feats = read_network(dataset);
         for i in vertices(G)
             rem_edge!(G, i,i);
@@ -177,7 +182,24 @@ function prepare_data(dataset; N=1, p1=1, p2=1, s=[2], d=[1])
         s, d = Int[], Int[];
         p = p1 + sum(d);
         interaction_list=vcat([(i,i) for i in 1:p], [(i,j) for i in 1:p for j in i+1:p])
-        A = getA(G, p; interaction_list=interaction_list);
+        A = get_adjacency_matrices(G, p; interaction_list=interaction_list);
+
+        α0 = nothing;
+        Z = nothing;
+        Y = unsqueeze(hcat([vcat(feat,label) for (feat,label) in zip(feats,labels)]...), 3);
+        X = [];
+    elseif (match(r"twitch_(.+)_true_([0-9]+)", dataset) != nothing)
+        G, _, labels, feats = read_network(dataset);
+        for i in vertices(G)
+            rem_edge!(G, i,i);
+        end
+
+        n = nv(G);
+        p1, p2 = length(feats[1]) + length(labels[1]), 0;
+        s, d = Int[], Int[];
+        p = p1 + sum(d);
+        interaction_list=vcat([(i,i) for i in 1:p], [(i,j) for i in 1:p for j in i+1:p])
+        A = get_adjacency_matrices(G, p; interaction_list=interaction_list);
 
         α0 = nothing;
         Z = nothing;
@@ -194,7 +216,7 @@ function prepare_data(dataset; N=1, p1=1, p2=1, s=[2], d=[1])
         s, d = Int[7], Int[7];
         p = p1 + sum(d);
         interaction_list=vcat([(i,i) for i in 1:p], [(i,j) for i in 1:p for j in i+1:p])
-        A = getA(G, p; interaction_list=interaction_list);
+        A = get_adjacency_matrices(G, p; interaction_list=interaction_list);
 
         α0 = nothing;
         Z = nothing;
@@ -211,7 +233,7 @@ function prepare_data(dataset; N=1, p1=1, p2=1, s=[2], d=[1])
         # s, d = vcat([2 for _ in 1:p2-1], 7), vcat([1 for _ in 1:p2-1], 7);
         # p = p1 + sum(d);
         # interaction_list=vcat([(i,i) for i in 1:p], [(i,j) for i in 1:p for j in max(i+1,p-6):p])
-        # A = getA(G, p; interaction_list=interaction_list);
+        # A = get_adjacency_matrices(G, p; interaction_list=interaction_list);
         # α0 = nothing;
         # X = vcat([unsqueeze(hcat([eye(2)[:,feat[i]+1] for feat in feats]...), 3) for i in 1:p2], unsqueeze(hcat([eye(7)[:,label] for label in labels]...), 3));
         # Y = zeros(0, n, 1);
@@ -250,7 +272,10 @@ function prepare_data(dataset; N=1, p1=1, p2=1, s=[2], d=[1])
     return G, A, λ_getα, s, d, α0, X, Y, Z;
 end
 
-# ARGS = ["0", "ward_election_2012",         "true",     "1:1",    "0.1:0.1:0.6", "0.9"];
+# ARGS = ["0", "county_election_2012",       "true",     "7:7",    "0.1:0.1:0.6", "0.9"];
+# ARGS = ["0", "ward_election_2012",         "true",     "6:6",    "0.1:0.1:0.6", "0.9"];
+# ARGS = ["0", "environment_pm2.5_2008",     "true",     "5:5",    "0.1:0.1:0.6", "0.9"];
+# ARGS = ["0", "twitch_PTBR_true_4",         "true",     "5:5",    "0.1:0.1:0.6", "0.9"];
 # ARGS = ["0", "cora_true_8",                "true",     "9:15",   "0.1:0.1:0.6", "0.9"];
 # ARGS = ["0", "cora_false_0",               "false", "1434:1440", "0.1:0.1:0.6", "0.9"];
 # ARGS = ["0", "cropsim_harvestarea_2000_5", "false",    "6:6",    "0.1:0.1:0.6", "0.9"];
@@ -273,6 +298,7 @@ p1 = size(Y,1);
 p2 = length(X);
 p = p1 + sum(d);
 
+# the indices for features in fidx and vertices in V
 FIDX(fidx, V=vertices(G)) = [(i-1)*p+j for i in V for j in fidx];
 
 
@@ -553,7 +579,7 @@ function fit_model(seed_val=0)
     end
 
     dat = [(L->([X_[:,:,L] for X_ in X], Y[:,:,L]))(sample(1:N, n_batch)) for _ in 1:n_step];
-    print_params() = @printf("α:  %s\n", array2str(getα()));
+    print_params() = (@printf("α:  %s\n", array2str(getα())); flush(stdout));
     train!(loss, [Flux.params(φ, μ..., logσ..., η...), Flux.params(enc, reg)], dat, [ADAM(1.0e-2), ADAM(1.0e-2)]; start_opts = [0, 0], cb = print_params, cb_skip=100);
 
     return data(getα());
@@ -566,7 +592,7 @@ lidx = Meta.parse(ARGS[4]) |> eval;
 fidx = setdiff(collect(1:p), lidx);
 
 # analysis
-function print_vol(lidx, fidx, ll, uu; seed_val=0)
+function print_MI(lidx, fidx, ll, uu; seed_val=0)
     Random.seed!(seed_val);
 
     obsl = FIDX(lidx, ll); obsf = FIDX(fidx, vertices(G)); trgl = FIDX(lidx, uu);
@@ -575,14 +601,14 @@ function print_vol(lidx, fidx, ll, uu; seed_val=0)
     getH_L2_F()   = (-logdetΓ(param(α); A=A, P=vcat(obsl,trgl), t=t, k=k)) - (-logdetΓ(param(α); A=A, P=obsl, t=t, k=k));
     getH_L2_FL1() = (-logdetΓ(param(α); A=A, P=trgl, t=t, k=k));
 
-    H_L2     = mean([getH_L2()     for _ in 1:10]);
-    H_L2_L1  = mean([getH_L2_L1()  for _ in 1:10]);
-    H_L2_F   = mean([getH_L2_F()   for _ in 1:10]);
-    H_L2_FL1 = mean([getH_L2_FL1() for _ in 1:10]);
+    H_L2     = mean([getH_L2()     for _ in 1:100]); # entropy of target labels, marginalized over observed features, observed labels
+    H_L2_L1  = mean([getH_L2_L1()  for _ in 1:100]); # entropy of target lables, conditioned on observed labels, marginalized over observed features
+    H_L2_F   = mean([getH_L2_F()   for _ in 1:100]); # entropy of target lables, conditioned on observed features, marginalized over observed labels
+    H_L2_FL1 = mean([getH_L2_FL1() for _ in 1:100]); # entropy of target lables, conditioned on observed features, observed labels
 
-    @printf("    LP MI:    %10.4f\n", (H_L2 - H_L2_L1)  / length(uu));
-    @printf("   SLR MI:    %10.4f\n", (H_L2 - H_L2_F)   / length(uu));
-    @printf("SLR_LP MI:    %10.4f\n", (H_L2 - H_L2_FL1) / length(uu));
+    @printf("    LP MI:    %10.4f\n", (H_L2 - H_L2_L1)  / length(uu)); flush(stdout);
+    @printf("   SLR MI:    %10.4f\n", (H_L2 - H_L2_F)   / length(uu)); flush(stdout);
+    @printf("SLR_LP MI:    %10.4f\n", (H_L2 - H_L2_FL1) / length(uu)); flush(stdout);
 end
 
 # learn and test accuracy
@@ -661,22 +687,32 @@ function run_dataset(G, feats, labels, ll, uu; predictor="zero", correlation="ze
         return lU;
     end
 
-    function smooth(feats, S; η=0.9)
-        feats_ = feats;
-        for _ in 1:100
-            feats_ = η*feats_*S + (1-η)*feats;
+    function smooth(feats, S; η=0.9, K=300)
+        results = zeros(size(feats));
+        smoothed_feats = feats;
+        for i in 0:K-1
+            results += (1-η)*η^i * smoothed_feats;
+            smoothed_feats *= S;
         end
-        return feats_;
+        results += η^K * smoothed_feats;
+
+        return results;
     end
 
     @assert !(predictor == "gnn" && feature_smoothing) "feature smoothing & gnn are redundant"
 
     Random.seed!(seed_val);
     n_batch = Int(ceil(length(ll)*0.1));
-    n_step = 300;
     classification = (size(labels,1) != 1);
     accuracyFun = classification ? probmax : R2;
-    η = (α != nothing) ? mean(α[lidx]./(α[lidx]+α[p.+lidx])) : parse(Float64, ARGS[6]);
+
+    if length(ARGS) >= 6
+        η = parse(Float64, ARGS[6]);
+    elseif α != nothing
+        η = mean(α[lidx]./(α[lidx]+α[p.+lidx]));
+    else
+        η = 0.9;
+    end
 
     S = spdiagm(0=>degree(G).^-0.5) * adjacency_matrix(G) * spdiagm(0=>degree(G).^-0.5);
     feature_smoothing && (feats = smooth(feats, S; η = η));
@@ -696,7 +732,7 @@ function run_dataset(G, feats, labels, ll, uu; predictor="zero", correlation="ze
         θ = Flux.params(mlp);
         optθ = Optimiser(WeightDecay(1.0e-4), ADAM(1.0e-3));
     elseif predictor == "gnn"
-        enc = graph_encoder(size(feats,1), dim_h, dim_h, repeat(["SAGE_Mean"], 2); σ=relu);
+        enc = graph_encoder(size(feats,1), dim_h, dim_h, repeat(["SAGE_GCN"], 2); σ=relu);
         reg = Chain(Dense(dim_h, size(labels,1)), classification ? softmax : identity);
         getPrediction = L -> reg(hcat(enc(G, L, u->feats[:,u])...));
         θ = Flux.params(enc, reg);
@@ -708,19 +744,20 @@ function run_dataset(G, feats, labels, ll, uu; predictor="zero", correlation="ze
     if correlation == "zero"
         Γ = speye(n);
     elseif correlation == "homo"
-        # Γ = speye(n) + (η / (1 - η))*normalized_laplacian(G);
-        Γ = speye(n) + 10.0*normalized_laplacian(G);
+        Γ = speye(n) + (η / (1 - η))*normalized_laplacian(G);
+        # Γ = normalized_laplacian(G);
     else
         error("unexpected correlation");
     end
 
     loss(L) = (lossfun = (classification ? Flux.crossentropy : Flux.mse); lossfun(getPrediction(L), labels[:,L]));
-    mini_batches = [tuple(sample(ll, n_batch, replace=false)) for _ in 1:n_step];
+    n_step = 300; mini_batches = [tuple(sample(ll, n_batch, replace=false)) for _ in 1:n_step];
 
-    cb() = @printf("%6.3f,    %6.3f,    %6.3f\n", loss(ll), loss(uu), accuracyFun(pred(uu,ll; labelL=labels[:,ll], predict=getPrediction, Γ=Γ), labels[:,uu]));
-    (predictor != "zero") && train!(loss, [θ], mini_batches, [optθ]; cb=()->nothing, cb_skip=200);
+    cb() = (@printf("%6.3f,    %6.3f,    %6.3f\n", loss(ll), loss(uu), accuracyFun(pred(uu,ll; labelL=labels[:,ll], predict=getPrediction, Γ=Γ), labels[:,uu])); flush(stdout));
+    (predictor != "zero") && train!(loss, [θ], mini_batches, [optθ]; cb=()->nothing, cb_skip=100);
 
     @printf("%s AC:    %10.4f\n", prefix, accuracyFun(pred(uu,ll; labelL=labels[:,ll], predict=getPrediction, Γ=Γ), labels[:,uu]));
+    flush(stdout);
 end
 
 split_ratios = Meta.parse(ARGS[5]) |> eval;
@@ -729,7 +766,7 @@ for split_ratio in split_ratios
         Random.seed!(seed_val + seed_increment);
 
         ll, uu = rand_split(nv(G), split_ratio);
-        fitα && print_vol(lidx, fidx, ll, uu; seed_val=seed_val);
+        fitα && print_MI(lidx, fidx, ll, uu; seed_val=seed_val);
 
         feats, labels = Y[fidx,:,1], ((length(X) == 0) ? Y[lidx,:,1] : X[1][:,:,1]);
         run_dataset(G, feats, labels, ll, uu, predictor="zero",   correlation="homo", feature_smoothing=false, seed_val=seed_val, prefix="    LP");
@@ -740,5 +777,5 @@ for split_ratio in split_ratios
         run_dataset(G, feats, labels, ll, uu, predictor="gnn",    correlation="zero", feature_smoothing=false, seed_val=seed_val, prefix="   GNN");
         run_dataset(G, feats, labels, ll, uu, predictor="gnn",    correlation="homo", feature_smoothing=false, seed_val=seed_val, prefix="GNN_LP");
     end
-    @printf("\n");
+    @printf("\n"); flush(stdout);
 end

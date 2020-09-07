@@ -73,7 +73,7 @@ plot!(h, circleShape((b2 .+ x2 .+ t3)..., sn), seriestype=[:shape], linewidth=0.
 plot!(h, circleShape((b2 .+ x3 .+ t3)..., sn), seriestype=[:shape], linewidth=0.5, color=3, linecolor=:black, legend=false, fillalpha=1.0, aspect_ratio=1.0); annotate!(h, (b2 .+ x3 .+ 1.4 * t3 .+ dsp3)..., text(L"y_{3}",  :black, :left, 14));
 #----------------------------------------------------------------------
 
-annotate!(h, ((b1 .+ b2) / 2.0 .+ x2*0.0)..., text(L"E[\mathbf{y}_{U}|\mathbf{X}] = (\mathbf{X} \beta)_{U}", :black, :left, 10))
+annotate!(h, ((b1 .+ b2) / 2.0 .+ x2*0.0)..., text(L"E[\mathbf{y}_{U}|\mathbf{X}] = \mathbf{X}_{U} \beta, \beta = (\mathbf{X}_{L}^{\rm T} \mathbf{X}_{L})^{-1} \mathbf{X}_{L}^{\rm T} \mathbf{y}_{L}", :black, :left, 10))
 annotate!(h, ((b1 .+ b2) / 2.0 .+ x1*0.3)..., text(L"E[\mathbf{y}_{U}|\mathbf{y}_{L}] = -(\mathbf{I} + \omega \mathcal{L})_{UU}^{-1} (\mathbf{I} + \omega \mathcal{L})_{UL} \mathbf{y}_{L}", :black, :left, 10))
 annotate!(h, ((b1 .+ b2) / 2.0 .+ x1*0.6)..., text(L"E[\mathbf{y}_{U}|\mathbf{X}] = [(\mathbf{I} + \omega \mathcal{L})^{-1} \mathbf{X} \beta]_{U}", :black, :left, 10))
 annotate!(h, ((b1 .+ b2) / 2.0 .- x3*0.3)..., text(L"E[\mathbf{y}_{U}|\mathbf{X}, \mathbf{y}_{L}] =", :black, :left, 10))

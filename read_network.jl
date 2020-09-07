@@ -15,6 +15,15 @@ max_normalize(x) = maximum(abs.(x)) == 0 ? x : x/maximum(abs.(x));
 std_normalize(x) = std(x) == 0 ? zeros(length(x)) : (x.-mean(x))./std(x);
 int_normalize(x) = std(x) == 0 ? zeros(length(x)) : (x.-minimum(x))/(maximum(x).-minimum(x))*2 .- 1;
 
+function parse_mean_fill(vr, normalize=false)
+    vb = mean(map(x->(typeof(x)<:Union{Float64,Int} ? x : parse(Float64, replace(x, ","=>""))), filter(!ismissing, vr)));
+    vv = collect(map(x->ismissing(x) ? vb : (typeof(x)<:Union{Float64,Int} ? x : parse(Float64, replace(x, ","=>""))), vr));
+    if normalize
+        vv = (vv .- vb) / std(vv);
+    end
+    return vv;
+end
+
 function simulate_ising(n, h0, J)
     g = LightGraphs.grid([n,n]);
 
@@ -48,9 +57,9 @@ function read_county(prediction, year)
 
     fips = sort(unique(union(hh,tt)));
     id2num = Dict(id=>num for (num,id) in enumerate(fips));
-    g = Graph(length(id2num));
+    G = Graph(length(id2num));
     for (h,t) in zip(hh,tt)
-        add_edge!(g, id2num[h], id2num[t]);
+        add_edge!(G, id2num[h], id2num[t]);
     end
 
     VOT = CSV.read("datasets/election/election.csv");
@@ -68,17 +77,9 @@ function read_county(prediction, year)
     edu = DataFrames.DataFrame((:FIPS=>EDU[:,Symbol("FIPS")], :BachelorRate=>EDU[:,Symbol("BachelorRate", year)]));
     uep = DataFrames.DataFrame((:FIPS=>UEP[:,:FIPS], :UnemploymentRate=>UEP[:,Symbol("Unemployment_rate_", min(max(2007,year), 2018))]));
 
-    jfl(df1, df2) = join(df1, df2, on=:FIPS, kind=:left);
-    dat = jfl(jfl(jfl(jfl(jfl(cty, vot), icm), pop), edu), uep);
-
-    function parse_mean_fill(vr, normalize=false)
-        vb = mean(map(x->(typeof(x)<:Union{Float64,Int} ? x : parse(Float64, replace(x, ","=>""))), filter(!ismissing, vr)));
-        vv = collect(map(x->ismissing(x) ? vb : (typeof(x)<:Union{Float64,Int} ? x : parse(Float64, replace(x, ","=>""))), vr));
-        if normalize
-            vv = (vv .- vb) / std(vv);
-        end
-        return vv;
-    end
+    jfl(df1, df2) = join(df1, df2, on=:FIPS, kind=:inner);
+    dat = sort(jfl(jfl(jfl(jfl(jfl(cty, vot), icm), pop), edu), uep), [:FIPS]);
+    g, ori_id = induced_subgraph(G, [id2num[id] for id in dat[:,:FIPS]]);
 
     # extract features and label
     dem = parse_mean_fill(dat[:,3]);
@@ -112,6 +113,74 @@ function read_county(prediction, year)
 
     return g, [adjacency_matrix(g)], y, f;
 end
+
+function read_environment(prediction, year)
+    adj = CSV.read("datasets/election/adjacency.txt", header=0);
+    fips2cty = Dict();
+    for i in 1:size(adj,1)
+        if !ismissing(adj[i,2])
+            fips2cty[adj[i,2]] = adj[i,1];
+        end
+    end
+
+    hh = adj[:,2];
+    tt = adj[:,4];
+
+    @assert !ismissing(hh[1]);
+    for i in 2:size(hh,1)
+        ismissing(hh[i]) && (hh[i] = hh[i-1]);
+    end
+    hh = convert(Vector{Int}, hh);
+
+    fips = sort(unique(union(hh,tt)));
+    id2num = Dict(id=>num for (num,id) in enumerate(fips));
+    G = Graph(length(id2num));
+    for (h,t) in zip(hh,tt)
+        add_edge!(G, id2num[h], id2num[t]);
+    end
+
+    MAT = filter(x -> x[:Year] == year, CSV.read("datasets/environment/max_air_temperature.txt"));
+    LST = filter(x -> x[:Year] == year, CSV.read("datasets/environment/land_surface_temperature.txt"));
+    PCP = filter(x -> x[:Year] == year, CSV.read("datasets/environment/percipitation.txt"));
+    SLT = filter(x -> x[:Year] == year, CSV.read("datasets/environment/sunlight.txt"));
+    FPM = filter(x -> x[:Year] == year, CSV.read("datasets/environment/fine_particulate_matter.txt"));
+
+    cty = DataFrames.DataFrame((:FIPS=>fips, :County=>[fips2cty[fips_] for fips_ in fips]));
+    mat = DataFrames.DataFrame((:FIPS=>MAT[:,Symbol("County Code")], :MAT=>MAT[:,Symbol("Avg Daily Max Air Temperature (C)")]));
+    lst = DataFrames.DataFrame((:FIPS=>LST[:,Symbol("County Code")], :LST=>LST[:,Symbol("Avg Day Land Surface Temperature (C)")]));
+    pcp = DataFrames.DataFrame((:FIPS=>PCP[:,Symbol("County Code")], :PCP=>PCP[:,Symbol("Avg Daily Precipitation (mm)")]));
+    slt = DataFrames.DataFrame((:FIPS=>SLT[:,Symbol("County Code")], :SLT=>SLT[:,Symbol("Avg Daily Sunlight (KJ/m\xb2)")]));
+    fpm = DataFrames.DataFrame((:FIPS=>FPM[:,Symbol("County Code")], :FPM=>FPM[:,Symbol("Avg Fine Particulate Matter (\xb5g/m\xb3)")]));
+
+    jfl(df1, df2) = join(df1, df2, on=:FIPS, kind=:inner);
+    dat = sort(jfl(jfl(jfl(jfl(jfl(cty, mat), lst), pcp), slt), fpm), [:FIPS]);
+    g, ori_id = induced_subgraph(G, [id2num[id] for id in dat[:,:FIPS]]);
+
+    ff = zeros(Float32, size(dat,1), 5);
+    for i in 1:5
+        ff[:,i] = parse_mean_fill(dat[:,i+2], true);
+    end
+
+    if prediction == "airT"
+        pos = 1;
+    elseif prediction == "landT"
+        pos = 2;
+    elseif prediction == "precipitation"
+        pos = 3;
+    elseif prediction == "sunlight"
+        pos = 4;
+    elseif prediction == "pm2.5"
+        pos = 5;
+    else
+        error("unexpected prediction type");
+    end
+
+    y = ff[:,pos];
+    f = [vcat(ff[i,1:pos-1], ff[i,pos+1:end]) for i in 1:size(ff,1)];
+
+    return g, [adjacency_matrix(g)], y, f;
+end
+
 
 function read_ward(prediction, year)
     code = CSV.read("datasets/london/code.csv", header=1);
@@ -197,9 +266,11 @@ function read_twitch(cnm, dim_reduction=false, dim_embed=8)
     #----------------------------------------------------------------------------
 
     if dim_reduction
-        U,S,V = svds(hcat(f_all...); nsv=dim_embed)[1];
+        U,S,V = svds(hcat(f...); nsv=dim_embed)[1];
         UU = U .* sign.(sum(U,dims=1)[:])';
         f = [UU'*f_ for f_ in f];
+        fbar = mean(f);
+        f = [f_ - fbar for f_ in f];
     end
 
     g = Graph(length(f));
@@ -375,6 +446,13 @@ function read_cora(dim_reduction=false, dim_embed=8)
         f = [f_ - fbar for f_ in f];
     end
 
+#   if dim_reduction # gaussian random projection
+#       fm = ff ./ sqrt.(sum(ff, dims=2));
+#       fp = fm * randn(size(fm,2), dim_embed);
+#       fr = fp .- mean(fp, dims=1);
+#       f = [fr[i,:] for i in 1:size(fr,1)];
+#   end
+
     return g, [adjacency_matrix(g)], y, f;
 end
 
@@ -401,8 +479,9 @@ end
 
 function read_network(network_name)
     (p = match(r"ising_([0-9]+)_([0-9\.\-]+)_([0-9\.\-]+)$", network_name)) != nothing && return simulate_ising(parse(Int, p[1]), parse(Float64, p[2]), parse(Float64, p[3]));
-    (p = match(r"county_([a-z]+)_([0-9]+)$", network_name)) != nothing && return read_county(p[1], parse(Int, p[2]));
-    (p = match(r"ward_([a-z]+)_([0-9]*)$", network_name)) != nothing && return read_ward(p[1], p[2]);
+    (p = match(r"county_(.+)_([0-9]+)$", network_name)) != nothing && return read_county(p[1], parse(Int, p[2]));
+    (p = match(r"environment_(.+)_([0-9]+)$", network_name)) != nothing && return read_environment(p[1], parse(Int, p[2]));
+    (p = match(r"ward_(.+)_([0-9]+)$", network_name)) != nothing && return read_ward(p[1], p[2]);
     (p = match(r"twitch_([0-9a-zA-Z]+)_([a-z]+)_([0-9]+)$", network_name)) != nothing && return read_twitch(p[1], parse(Bool, p[2]), parse(Int, p[3]));
     (p = match(r"sexual_([0-9]+)$", network_name)) != nothing && return read_sexual(parse(Int, p[1]));
     (p = match(r"Anaheim", network_name)) != nothing       && return read_transportation_network(network_name, 8, 1:2, [3,4,5,8], 6, [1,2,4], 1:416);
