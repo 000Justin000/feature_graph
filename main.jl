@@ -601,10 +601,10 @@ function print_MI(lidx, fidx, ll, uu; seed_val=0)
     getH_L2_F()   = (-logdetΓ(param(α); A=A, P=vcat(obsl,trgl), t=t, k=k)) - (-logdetΓ(param(α); A=A, P=obsl, t=t, k=k));
     getH_L2_FL1() = (-logdetΓ(param(α); A=A, P=trgl, t=t, k=k));
 
-    H_L2     = mean([getH_L2()     for _ in 1:100]); # entropy of target labels, marginalized over observed features, observed labels
-    H_L2_L1  = mean([getH_L2_L1()  for _ in 1:100]); # entropy of target lables, conditioned on observed labels, marginalized over observed features
-    H_L2_F   = mean([getH_L2_F()   for _ in 1:100]); # entropy of target lables, conditioned on observed features, marginalized over observed labels
-    H_L2_FL1 = mean([getH_L2_FL1() for _ in 1:100]); # entropy of target lables, conditioned on observed features, observed labels
+    H_L2     = mean([data(getH_L2())     for _ in 1:30]); # entropy of target labels, marginalized over observed features, observed labels
+    H_L2_L1  = mean([data(getH_L2_L1())  for _ in 1:30]); # entropy of target lables, conditioned on observed labels, marginalized over observed features
+    H_L2_F   = mean([data(getH_L2_F())   for _ in 1:30]); # entropy of target lables, conditioned on observed features, marginalized over observed labels
+    H_L2_FL1 = mean([data(getH_L2_FL1()) for _ in 1:30]); # entropy of target lables, conditioned on observed features, observed labels
 
     @printf("    LP MI:    %10.4f\n", (H_L2 - H_L2_L1)  / length(uu)); flush(stdout);
     @printf("   SLR MI:    %10.4f\n", (H_L2 - H_L2_F)   / length(uu)); flush(stdout);

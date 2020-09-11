@@ -14,9 +14,9 @@
 # julia main.jl  0           ward_election_2012  true     4:4    0.05:0.05:0.60 0.999 2>&1 >> ward_income &
 # julia main.jl  0           ward_election_2012  true     5:5    0.05:0.05:0.60 0.999 2>&1 >> ward_populationsize &
 # julia main.jl  0           ward_election_2012  true     6:6    0.05:0.05:0.60 0.999 2>&1 >> ward_election &
-# julia main.jl  0          twitch_PTBR_true_04  true     5:5    0.05:0.05:0.60       2>&1 >> twitch_PTBR_04 &
-  julia main.jl  0          twitch_PTBR_true_08  true     9:9    0.05:0.05:0.60       2>&1 >> twitch_PTBR_08 &
-  julia main.jl  0          twitch_PTBR_true_16  true    17:17   0.05:0.05:0.60       2>&1 >> twitch_PTBR_16 &
+# julia main.jl  0          twitch_PTBR_true_04  true     5:5    0.05:0.05:0.60 0.900 2>&1 >> twitch_PTBR_04 &
+  julia main.jl  0          twitch_PTBR_true_08  true     9:9    0.05:0.05:0.60 0.900 2>&1 >> twitch_PTBR_08 &
+# julia main.jl  0          twitch_PTBR_true_16  true    17:17   0.05:0.05:0.60       2>&1 >> twitch_PTBR_16 &
 # julia main.jl  0          twitch_PTBR_true_32  true    33:33   0.05:0.05:0.60       2>&1 >> twitch_PTBR_32 &
 # julia main.jl  0          twitch_PTBR_true_64  true    65:65   0.05:0.05:0.60       2>&1 >> twitch_PTBR_64 &
 # julia main.jl  0                 cora_true_04  false    5:11   0.05:0.05:0.60 0.999 2>&1 >> cora_04 &
