@@ -659,14 +659,36 @@ function run_dataset(G, feats, labels, ll, uu; predictor="zero", correlation="ze
         # for regression task, residual is defined as ``true-label minus predicted-label''
         if (size(labelL,1) == 1)
             rL = (labelL - data(pL));
-            lU = data(pU) + interpolate(L, rL; Γ=Γ)[:,U];
         # for classification task, if the prediction is correct, residual should be 0
         else
-            interpolated_labels = interpolate(L, labelL; Γ=Γ);
-            interpolated_factors = log.((x -> x ./ sum(x, dims=1))(interpolated_labels .+ 1.0e-3));
+            gap = 0.3;
 
-            lU = softmax(data(pU) + interpolated_factors[:,U]);
+            function process(x::Vector, loc::Int)
+                @assert (all(x .>= 0) && abs(sum(x) - 1.0) < 1.0e-6) "unexpected probability vector"
+
+                c = sortperm(x; rev=true);
+                if ((c[1] == loc) && (x[c[1]] - x[c[2]] >= gap))
+                    return x;
+                else
+                    xx = x[:];
+                    c0 = setdiff(c, loc);
+
+                    xx[c0] *= (1-gap) / (x[c0[1]] + sum(x[c0]));
+                    xx[loc] = xx[c0[1]] + gap;
+
+                    return xx;
+                end
+            end
+
+            hpL = collect(pL);
+            for i in 1:length(L)
+                hpL[:,i] = process(hpL[:,i], argmax(labelL[:,i]));
+            end
+
+            rL = hpL .- collect(pL);
         end
+
+        lU = data(pU) + interpolate(L, rL; Γ=Γ)[:,U];
 
         return lU;
     end
@@ -706,18 +728,18 @@ function run_dataset(G, feats, labels, ll, uu; predictor="zero", correlation="ze
         θ = Flux.params();
         optθ = ADAM(0.0);
     elseif predictor == "linear"
-        lls = Chain(Dense(size(feats,1), size(labels,1)));
+        lls = Chain(Dense(size(feats,1), size(labels,1)), classification ? softmax : identity);
         getPrediction = L -> lls(feats[:,L]);
         θ = Flux.params(lls);
         optθ = Optimiser(WeightDecay(1.0e-3), ADAM(1.0e-2));
     elseif predictor == "mlp"
-        mlp = Chain(Dense(size(feats,1), dim_h, relu), Dense(dim_h, dim_h, relu), Dense(dim_h, dim_h, relu), Dense(dim_h, size(labels,1)));
+        mlp = Chain(Dense(size(feats,1), dim_h, relu), Dense(dim_h, dim_h, relu), Dense(dim_h, dim_h, relu), Dense(dim_h, size(labels,1)), classification ? softmax : identity);
         getPrediction = L -> mlp(feats[:,L]);
         θ = Flux.params(mlp);
         optθ = Optimiser(WeightDecay(1.0e-4), ADAM(1.0e-3));
     elseif predictor == "gnn"
         enc = graph_encoder(size(feats,1), dim_h, dim_h, repeat(["SAGE_GCN"], 2); σ=relu);
-        reg = Chain(Dense(dim_h, size(labels,1)));
+        reg = Chain(Dense(dim_h, size(labels,1)), classification ? softmax : identity);
         getPrediction = L -> reg(hcat(enc(G, L, u->feats[:,u])...));
         θ = Flux.params(enc, reg);
         optθ = Optimiser(WeightDecay(1.0e-4), ADAM(1.0e-3));
@@ -739,11 +761,7 @@ function run_dataset(G, feats, labels, ll, uu; predictor="zero", correlation="ze
             weights = sum(labels .* (1 ./ sum(labels, dims=2)), dims=1)[:];
             normalized_weights = ones(size(labels,1)) * (weights ./ mean(weights))';
 
-            ll_L = setdiff(ll, L);
-            interpolated_labels = interpolate(ll_L, labels[:,ll_L]; Γ=Γ);
-            interpolated_factors = log.((x -> x ./ sum(x, dims=1))(interpolated_labels .+ 1.0e-3));
-
-            return Flux.crossentropy(softmax(getPrediction(L)+interpolated_factors[:,L]), labels[:,L], weight=normalized_weights[:,L]);
+            return Flux.crossentropy(getPrediction(L), labels[:,L], weight=normalized_weights[:,L]);
         else
             return Flux.mse(getPrediction(L), labels[:,L]);
         end
