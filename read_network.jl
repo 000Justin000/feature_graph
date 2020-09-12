@@ -6,6 +6,7 @@ using DelimitedFiles;
 using DataFrames;
 using CSV;
 using JSON;
+using MAT;
 using Flux;
 using Arpack;
 using LinearAlgebra;
@@ -446,12 +447,28 @@ function read_cora(dim_reduction=false, dim_embed=8)
         f = [f_ - fbar for f_ in f];
     end
 
-#   if dim_reduction # gaussian random projection
-#       fm = ff ./ sqrt.(sum(ff, dims=2));
-#       fp = fm * randn(size(fm,2), dim_embed);
-#       fr = fp .- mean(fp, dims=1);
-#       f = [fr[i,:] for i in 1:size(fr,1)];
-#   end
+    return g, [adjacency_matrix(g)], y, f;
+end
+
+function read_fraud_detection(network_name)
+    if network_name == "YelpChi"
+        dat = matread("datasets/fraud_detection/YelpChi.mat")
+        g0 = Graph(dat["net_rur"]);
+    elseif network_name == "Amazon"
+        dat = matread("datasets/fraud_detection/Amazon.mat")
+        g0 = Graph(dat["net_upu"]);
+    end
+
+    lcc = sort(connected_components(g0), by=cc->length(cc))[end];
+    g,_ = induced_subgraph(g0, lcc);
+
+    ff = collect(dat["features"][lcc,:]);
+    for i in 1:size(ff,2)
+        ff[:,i] = std_normalize(ff[:,i]);
+    end
+
+    f = [ff[i,:] for i in 1:size(ff,1)];
+    y = Int.(dat["label"][lcc] .+ 1.0);
 
     return g, [adjacency_matrix(g)], y, f;
 end
@@ -486,6 +503,7 @@ function read_network(network_name)
     (p = match(r"sexual_([0-9]+)$", network_name)) != nothing && return read_sexual(parse(Int, p[1]));
     (p = match(r"Anaheim", network_name)) != nothing       && return read_transportation_network(network_name, 8, 1:2, [3,4,5,8], 6, [1,2,4], 1:416);
     (p = match(r"ChicagoSketch", network_name)) != nothing && return read_transportation_network(network_name, 7, 1:2, [3,4,5,8], 1, [1,2,3], 388:933);
+    (p = match(r"Amazon", network_name)) != nothing && return read_fraud_detection(network_name);
     (p = match(r"cora_([a-z]+)_([0-9]+)", network_name)) != nothing && return read_cora(parse(Bool, p[1]), parse(Int, p[2]));
     (p = match(r"cropsim_([a-z]+)_([0-9]+)_([0-9]+)", network_name)) != nothing && return read_cropsim(p[1], p[2], parse(Int, p[3]));
 end

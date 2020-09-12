@@ -228,17 +228,6 @@ function prepare_data(dataset; N=1, p1=1, p2=1, s=[2], d=[1])
             rem_edge!(G, i,i);
         end
 
-        # n = nv(G);
-        # p1, p2 = 0, length(feats[1]) + 1;
-        # s, d = vcat([2 for _ in 1:p2-1], 7), vcat([1 for _ in 1:p2-1], 7);
-        # p = p1 + sum(d);
-        # interaction_list=vcat([(i,i) for i in 1:p], [(i,j) for i in 1:p for j in max(i+1,p-6):p])
-        # A = get_adjacency_matrices(G, p; interaction_list=interaction_list);
-        # α0 = nothing;
-        # X = vcat([unsqueeze(hcat([eye(2)[:,feat[i]+1] for feat in feats]...), 3) for i in 1:p2], unsqueeze(hcat([eye(7)[:,label] for label in labels]...), 3));
-        # Y = zeros(0, n, 1);
-        # Z = nothing;
-
         n = nv(G);
         p1, p2 = 1433, 1;
         s, d = [7], [7];
@@ -265,6 +254,23 @@ function prepare_data(dataset; N=1, p1=1, p2=1, s=[2], d=[1])
         X = [];
         Y = unsqueeze(hcat([vcat(feat,label) for (feat,label) in zip(feats,labels)]...), 3);
         Z = nothing;
+    elseif (match(r"Amazon", dataset) != nothing)
+        G, _, labels, feats = read_network(dataset);
+        for i in vertices(G)
+            rem_edge!(G, i,i);
+        end
+
+        n = nv(G);
+        p1, p2 = length(feats[1]), 1;
+        s, d = Int[2], Int[2];
+        p = p1 + sum(d);
+        interaction_list=vcat([(i,i) for i in 1:p], [(i,j) for i in 1:p for j in i+1:p])
+        A = get_adjacency_matrices(G, p; interaction_list=interaction_list);
+
+        α0 = nothing;
+        Z = nothing;
+        Y = f32(hcat(feats...) .- mean(feats));
+        X = [unsqueeze(hcat([eye(2)[:,label] for label in labels]...), 3)];
     end
 
     λ_getα = φ -> getα(φ, p; interaction_list=interaction_list);
@@ -633,56 +639,34 @@ function run_dataset(G, feats, labels, ll, uu; predictor="zero", correlation="ze
         return r;
     end
 
-    function pred(U, L; labelL, predict, Γ)
+    function predict(U, L; labelL, getPrediction, Γ)
         """
         Args:
-              U: vertices to predict
-              L: vertices with ground truth labels
-         labelL: ground truth labels on L
-        predict: base predictor function
-              Γ: label propagation matrix
+                    U: vertices to predict
+                    L: vertices with ground truth labels
+               labelL: ground truth labels on L
+        getPrediction: base predictor function
+                    Γ: label propagation matrix
 
         Returns:
-             lU: predictive label = base predictor output + estimated noise
+                   lU: predictive label = base predictor output + estimated noise
         """
 
-        pUL = predict(vcat(U, L));
+        pUL = getPrediction(vcat(U, L));
         pU = pUL[:,1:length(U)];
         pL = pUL[:,length(U)+1:end];
 
         # for regression task, residual is defined as ``true-label minus predicted-label''
         if (size(labelL,1) == 1)
             rL = (labelL - data(pL));
+            lU = data(pU) + interpolate(L, rL; Γ=Γ)[:,U];
         # for classification task, if the prediction is correct, residual should be 0
         else
-            gap = 0.3;
+            interpolated_labels = interpolate(L, labelL; Γ=Γ);
+            interpolated_factors = log.((x -> x ./ sum(x, dims=1))(interpolated_labels .+ 1.0e-3));
 
-            function process(x::Vector, loc::Int)
-                @assert (all(x .>= 0) && abs(sum(x) - 1.0) < 1.0e-6) "unexpected probability vector"
-
-                c = sortperm(x; rev=true);
-                if ((c[1] == loc) && (x[c[1]] - x[c[2]] >= gap))
-                    return x;
-                else
-                    xx = x[:];
-                    c0 = setdiff(c, loc);
-
-                    xx[c0] *= (1-gap) / (x[c0[1]] + sum(x[c0]));
-                    xx[loc] = xx[c0[1]] + gap;
-
-                    return xx;
-                end
-            end
-
-            hpL = collect(pL);
-            for i in 1:length(L)
-                hpL[:,i] = process(hpL[:,i], argmax(labelL[:,i]));
-            end
-
-            rL = hpL .- collect(pL);
+            lU = softmax(data(pU) + interpolated_factors[:,U]);
         end
-
-        lU = data(pU) + interpolate(L, rL; Γ=Γ)[:,U];
 
         return lU;
     end
@@ -704,7 +688,7 @@ function run_dataset(G, feats, labels, ll, uu; predictor="zero", correlation="ze
     Random.seed!(seed_val);
     n_batch = Int(ceil(length(ll)*0.1));
     classification = (size(labels,1) != 1);
-    accuracyFun = classification ? probmax : R2;
+    accuracyFun = classification ? detection_f1 : R2;
 
     if length(ARGS) >= 6
         η = parse(Float64, ARGS[6]);
@@ -722,18 +706,18 @@ function run_dataset(G, feats, labels, ll, uu; predictor="zero", correlation="ze
         θ = Flux.params();
         optθ = ADAM(0.0);
     elseif predictor == "linear"
-        lls = Chain(Dense(size(feats,1), size(labels,1)), classification ? softmax : identity);
+        lls = Chain(Dense(size(feats,1), size(labels,1)));
         getPrediction = L -> lls(feats[:,L]);
         θ = Flux.params(lls);
         optθ = Optimiser(WeightDecay(1.0e-3), ADAM(1.0e-2));
     elseif predictor == "mlp"
-        mlp = Chain(Dense(size(feats,1), dim_h, relu), Dense(dim_h, dim_h, relu), Dense(dim_h, dim_h, relu), Dense(dim_h, size(labels,1)), classification ? softmax : identity);
+        mlp = Chain(Dense(size(feats,1), dim_h, relu), Dense(dim_h, dim_h, relu), Dense(dim_h, dim_h, relu), Dense(dim_h, size(labels,1)));
         getPrediction = L -> mlp(feats[:,L]);
         θ = Flux.params(mlp);
         optθ = Optimiser(WeightDecay(1.0e-4), ADAM(1.0e-3));
     elseif predictor == "gnn"
         enc = graph_encoder(size(feats,1), dim_h, dim_h, repeat(["SAGE_GCN"], 2); σ=relu);
-        reg = Chain(Dense(dim_h, size(labels,1)), classification ? softmax : identity);
+        reg = Chain(Dense(dim_h, size(labels,1)));
         getPrediction = L -> reg(hcat(enc(G, L, u->feats[:,u])...));
         θ = Flux.params(enc, reg);
         optθ = Optimiser(WeightDecay(1.0e-4), ADAM(1.0e-3));
@@ -750,13 +734,27 @@ function run_dataset(G, feats, labels, ll, uu; predictor="zero", correlation="ze
         error("unexpected correlation");
     end
 
-    loss(L) = (lossfun = (classification ? Flux.crossentropy : Flux.mse); lossfun(getPrediction(L), labels[:,L]));
+    function loss(L)
+        if classification
+            weights = sum(labels .* (1 ./ sum(labels, dims=2)), dims=1)[:];
+            normalized_weights = ones(size(labels,1)) * (weights ./ mean(weights))';
+
+            ll_L = setdiff(ll, L);
+            interpolated_labels = interpolate(ll_L, labels[:,ll_L]; Γ=Γ);
+            interpolated_factors = log.((x -> x ./ sum(x, dims=1))(interpolated_labels .+ 1.0e-3));
+
+            return Flux.crossentropy(softmax(getPrediction(L)+interpolated_factors[:,L]), labels[:,L], weight=normalized_weights[:,L]);
+        else
+            return Flux.mse(getPrediction(L), labels[:,L]);
+        end
+    end
+
     n_step = 300; mini_batches = [tuple(sample(ll, n_batch, replace=false)) for _ in 1:n_step];
 
-    cb() = (@printf("%6.3f,    %6.3f,    %6.3f\n", loss(ll), loss(uu), accuracyFun(pred(uu,ll; labelL=labels[:,ll], predict=getPrediction, Γ=Γ), labels[:,uu])); flush(stdout));
+    cb() = (@printf("%6.3f,    %6.3f,    %6.3f\n", loss(ll), loss(uu), accuracyFun(predict(uu,ll; labelL=labels[:,ll], getPrediction=getPrediction, Γ=Γ), labels[:,uu])); flush(stdout));
     (predictor != "zero") && train!(loss, [θ], mini_batches, [optθ]; cb=()->nothing, cb_skip=100);
 
-    @printf("%s AC:    %10.4f\n", prefix, accuracyFun(pred(uu,ll; labelL=labels[:,ll], predict=getPrediction, Γ=Γ), labels[:,uu]));
+    @printf("%s AC:    %10.4f\n", prefix, accuracyFun(predict(uu,ll; labelL=labels[:,ll], getPrediction=getPrediction, Γ=Γ), labels[:,uu]));
     flush(stdout);
 end
 

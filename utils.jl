@@ -74,6 +74,37 @@ function probmax(y_, y)
     return sum(y[argmax(y_; dims=1)]) / size(y,2);
 end
 
+function detection_f1(y_, y)
+    """
+    Args:
+        y_: predicted probabilities
+         y: true labels in one-hot encoding
+
+    Return:
+        accuracy
+    """
+    @assert (ndims(y_) == ndims(y) == 2) "unexpected input size"
+    @assert size(y_,1) == 2
+
+    l  = [argmax(y[:,i]) for i in 1:size(y,2)];
+    l_ = [argmax(y_[:,i]) for i in 1:size(y_,2)];
+
+    tp = sum((l .== 2) .& (l_ .== 2));
+    fp = sum((l .== 1) .& (l_ .== 2));
+    tn = sum((l .== 1) .& (l_ .== 1));
+    fn = sum((l .== 2) .& (l_ .== 1));
+
+    println(tp);
+    println(fp);
+    println(tn);
+    println(fn);
+
+    precision = tp / (tp + fp);
+    recall = tp / (tp + fn);
+
+    return sqrt(precision * recall);
+end
+
 function expansion(m, ids)
     """
     Args:
