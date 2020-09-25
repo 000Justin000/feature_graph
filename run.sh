@@ -25,7 +25,7 @@
 # julia main.jl  0                 cora_true_32  false   33:39   0.05:0.05:0.60 0.999 2>&1 >> cora_32 &
 # julia main.jl  0                 cora_true_64  false   65:71   0.05:0.05:0.60 0.999 2>&1 >> cora_64 &
 # julia main.jl  0                cora_false_00  false 1434:1440 0.05:0.05:0.60 0.900 2>&1 >> cora_ff &
-  julia main.jl  0                       Amazon  false   26:27   0.05:0.05:0.60 0.900 2>&1 >> amazon  &
+julia main.jl  0                       Amazon_1  false   26:27   0.05:0.05:0.60 0.900 2>&1 >> amazon  &
 # julia main.jl  0  cropsim_harvestarea_2000_04  false   05:05   0.05:0.05:0.60 0.999 2>&1 >> hv00_05 &
 # julia main.jl  0  cropsim_harvestarea_2000_09  false   10:10   0.05:0.05:0.60 0.999 2>&1 >> hv00_10 &
 # julia main.jl  0  cropsim_harvestarea_2000_14  false   15:15   0.05:0.05:0.60 0.999 2>&1 >> hv00_15 &

@@ -450,7 +450,7 @@ function read_cora(dim_reduction=false, dim_embed=8)
     return g, [adjacency_matrix(g)], y, f;
 end
 
-function read_fraud_detection(network_name)
+function read_fraud_detection(network_name, k=1)
     if network_name == "YelpChi"
         dat = matread("datasets/fraud_detection/YelpChi.mat")
         g0 = Graph(dat["net_rur"]);
@@ -459,16 +459,17 @@ function read_fraud_detection(network_name)
         g0 = Graph(dat["net_upu"]);
     end
 
-    lcc = sort(connected_components(g0), by=cc->length(cc))[end];
-    g,_ = induced_subgraph(g0, lcc);
+    ccs = sort(connected_components(g0), by=cc->length(cc));
+    ucc = vcat(ccs[end-k+1:end]...);
+    g,_ = induced_subgraph(g0, ucc);
 
-    ff = collect(dat["features"][lcc,:]);
+    ff = collect(dat["features"][ucc,:]);
     for i in 1:size(ff,2)
         ff[:,i] = std_normalize(ff[:,i]);
     end
 
     f = [ff[i,:] for i in 1:size(ff,1)];
-    y = Int.(dat["label"][lcc] .+ 1.0);
+    y = Int.(dat["label"][ucc] .+ 1.0);
 
     return g, [adjacency_matrix(g)], y, f;
 end
@@ -503,7 +504,7 @@ function read_network(network_name)
     (p = match(r"sexual_([0-9]+)$", network_name)) != nothing && return read_sexual(parse(Int, p[1]));
     (p = match(r"Anaheim", network_name)) != nothing       && return read_transportation_network(network_name, 8, 1:2, [3,4,5,8], 6, [1,2,4], 1:416);
     (p = match(r"ChicagoSketch", network_name)) != nothing && return read_transportation_network(network_name, 7, 1:2, [3,4,5,8], 1, [1,2,3], 388:933);
-    (p = match(r"Amazon", network_name)) != nothing && return read_fraud_detection(network_name);
+    (p = match(r"(YelpChi|Amazon)_([0-9]+)$", network_name)) != nothing && return read_fraud_detection(p[1], parse(Int, p[2]));
     (p = match(r"cora_([a-z]+)_([0-9]+)", network_name)) != nothing && return read_cora(parse(Bool, p[1]), parse(Int, p[2]));
     (p = match(r"cropsim_([a-z]+)_([0-9]+)_([0-9]+)", network_name)) != nothing && return read_cropsim(p[1], p[2], parse(Int, p[3]));
 end

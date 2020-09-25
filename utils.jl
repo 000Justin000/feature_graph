@@ -94,11 +94,6 @@ function detection_f1(y_, y)
     tn = sum((l .== 1) .& (l_ .== 1));
     fn = sum((l .== 2) .& (l_ .== 1));
 
-    println(tp);
-    println(fp);
-    println(tn);
-    println(fn);
-
     precision = tp / (tp + fp);
     recall = tp / (tp + fn);
 

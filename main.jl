@@ -254,7 +254,7 @@ function prepare_data(dataset; N=1, p1=1, p2=1, s=[2], d=[1])
         X = [];
         Y = unsqueeze(hcat([vcat(feat,label) for (feat,label) in zip(feats,labels)]...), 3);
         Z = nothing;
-    elseif (match(r"Amazon", dataset) != nothing)
+    elseif (match(r"(YelpChi|Amazon)_([0-9]+)", dataset) != nothing)
         G, _, labels, feats = read_network(dataset);
         for i in vertices(G)
             rem_edge!(G, i,i);
@@ -661,7 +661,7 @@ function run_dataset(G, feats, labels, ll, uu; predictor="zero", correlation="ze
             rL = (labelL - data(pL));
         # for classification task, if the prediction is correct, residual should be 0
         else
-            gap = 0.3;
+            gap = 0.8;
 
             function process(x::Vector, loc::Int)
                 @assert (all(x .>= 0) && abs(sum(x) - 1.0) < 1.0e-6) "unexpected probability vector"
@@ -738,7 +738,7 @@ function run_dataset(G, feats, labels, ll, uu; predictor="zero", correlation="ze
         θ = Flux.params(mlp);
         optθ = Optimiser(WeightDecay(1.0e-4), ADAM(1.0e-3));
     elseif predictor == "gnn"
-        enc = graph_encoder(size(feats,1), dim_h, dim_h, repeat(["SAGE_GCN"], 2); σ=relu);
+        enc = graph_encoder(size(feats,1), dim_h, dim_h, repeat(["SAGE_Mean"], 2); ks=repeat([5], 2), σ=relu);
         reg = Chain(Dense(dim_h, size(labels,1)), classification ? softmax : identity);
         getPrediction = L -> reg(hcat(enc(G, L, u->feats[:,u])...));
         θ = Flux.params(enc, reg);
@@ -750,8 +750,8 @@ function run_dataset(G, feats, labels, ll, uu; predictor="zero", correlation="ze
     if correlation == "zero"
         Γ = speye(n);
     elseif correlation == "homo"
-        Γ = speye(n) + (η / (1 - η))*normalized_laplacian(G);
-        # Γ = normalized_laplacian(G);
+        # Γ = speye(n) + (η / (1 - η))*normalized_laplacian(G);
+        Γ = normalized_laplacian(G);
     else
         error("unexpected correlation");
     end
